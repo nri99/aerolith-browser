@@ -37,6 +37,30 @@ pub fn physical_chrome_height(scale_factor: f64) -> u32 {
     (LOGICAL_CHROME_HEIGHT * scale_factor).round() as u32
 }
 
+pub fn chrome_expanded_height(mode: &str, scale_factor: f64, window_height: u32) -> u32 {
+    match mode {
+        "full" => window_height,
+        "dropdown" => {
+            let extra = (300.0 * scale_factor).round() as u32;
+            (physical_chrome_height(scale_factor) + extra).min(window_height)
+        }
+        _ => physical_chrome_height(scale_factor),
+    }
+}
+
+pub fn get_security_level_for_url(url: &str) -> &'static str {
+    let lower = url.trim().to_lowercase();
+    if lower.starts_with("https://") {
+        "secure"
+    } else if lower.starts_with("http://") {
+        "insecure"
+    } else if lower.starts_with("file://") {
+        "local"
+    } else {
+        "internal"
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChromeMsg {
     pub action: String,
@@ -75,6 +99,10 @@ pub enum UserEvent {
         scroll_x: u32,
         scroll_y: u32,
     },
+    LoadingState {
+        tab_id: usize,
+        loading: bool,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
@@ -95,6 +123,7 @@ struct Tab {
     webview: Option<WebView>,
     is_audio_playing: bool,
     has_form_input: bool,
+    is_loading: bool,
 }
 
 fn clean_js_json(json: &str) -> String {
@@ -298,11 +327,23 @@ fn create_content_webview(
             });
         })
         .with_on_page_load_handler(move |event, loaded_url| {
-            if let wry::PageLoadEvent::Finished = event {
-                let _ = proxy_load.send_event(UserEvent::UrlChanged {
-                    tab_id,
-                    url: loaded_url,
-                });
+            match event {
+                wry::PageLoadEvent::Started => {
+                    let _ = proxy_load.send_event(UserEvent::LoadingState {
+                        tab_id,
+                        loading: true,
+                    });
+                }
+                wry::PageLoadEvent::Finished => {
+                    let _ = proxy_load.send_event(UserEvent::LoadingState {
+                        tab_id,
+                        loading: false,
+                    });
+                    let _ = proxy_load.send_event(UserEvent::UrlChanged {
+                        tab_id,
+                        url: loaded_url,
+                    });
+                }
             }
         })
         .with_new_window_req_handler(move |target_url, _| {
@@ -343,6 +384,7 @@ fn create_tab(
         webview: Some(wv),
         is_audio_playing: false,
         has_form_input: false,
+        is_loading: false,
     })
 }
 
@@ -369,6 +411,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let proxy_chrome = proxy.clone();
     let mut chrome_context = WebContext::new(Some(webview_data_dir.clone()));
     let chrome_wv = match WebViewBuilder::new_with_web_context(&mut chrome_context)
+        .with_transparent(true)
+        .with_focused(true)
         .with_bounds(Rect {
             position: PhysicalPosition::new(0, 0).into(),
             size: PhysicalSize::new(DEFAULT_WIDTH, initial_chrome_h).into(),
@@ -388,6 +432,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let mut fallback_context = WebContext::new(Some(fallback_dir.clone()));
             let proxy_chrome_fb = proxy.clone();
             let wv = WebViewBuilder::new_with_web_context(&mut fallback_context)
+                .with_transparent(true)
+                .with_focused(true)
                 .with_bounds(Rect {
                     position: PhysicalPosition::new(0, 0).into(),
                     size: PhysicalSize::new(DEFAULT_WIDTH, initial_chrome_h).into(),
@@ -497,6 +543,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let mut chrome_expansion_mode = "none".to_string();
+
     // Run Event Loop with 5-second Memory Governor wakeups
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_secs(5));
@@ -571,7 +619,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 current_scale_factor = scale_factor;
                 current_size = *new_inner_size;
-                let chrome_h = physical_chrome_height(current_scale_factor);
+                let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
                 let _ = chrome_wv.set_bounds(Rect {
                     position: PhysicalPosition::new(0, 0).into(),
                     size: PhysicalSize::new(current_size.width, chrome_h).into(),
@@ -589,7 +637,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 if new_size.width > 0 && new_size.height > 0 {
                     current_size = new_size;
-                    let chrome_h = physical_chrome_height(current_scale_factor);
+                    let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, new_size.height);
                     let _ = chrome_wv.set_bounds(Rect {
                         position: PhysicalPosition::new(0, 0).into(),
                         size: PhysicalSize::new(new_size.width, chrome_h).into(),
@@ -618,6 +666,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
                     tab.scroll_x = scroll_x;
                     tab.scroll_y = scroll_y;
+                }
+            }
+
+            Event::UserEvent(UserEvent::LoadingState { tab_id, loading }) => {
+                if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
+                    tab.is_loading = loading;
+                }
+                if let Some(active_tab) = tabs.get(active_tab_index) {
+                    if active_tab.id == tab_id {
+                        let script = format!("window.setLoading({});", loading);
+                        let _ = chrome_wv.evaluate_script(&script);
+                    }
                 }
             }
 
@@ -822,6 +882,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         let is_bm = storage.is_bookmarked(&new_tab.url);
                                         let (can_back, can_fwd) = tab_nav_state(new_tab);
                                         sync_address_to_chrome(&chrome_wv, &new_tab.url, &new_tab.title, is_bm, can_back, can_fwd);
+                                        let _ = chrome_wv.evaluate_script(&format!("window.setLoading({});", new_tab.is_loading));
                                     }
                                     sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                     save_session_state(&storage, &tabs, active_tab_index);
@@ -889,6 +950,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     let is_bm = storage.is_bookmarked(&target_url);
                                     let (can_back, can_fwd) = tab_nav_state(active_tab);
                                     sync_address_to_chrome(&chrome_wv, &target_url, "New Tab", is_bm, can_back, can_fwd);
+                                    let _ = chrome_wv.evaluate_script("window.setLoading(false);");
                                 }
                                 sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                 save_session_state(&storage, &tabs, active_tab_index);
@@ -942,6 +1004,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         let is_bm = storage.is_bookmarked(&new_active.url);
                                         let (can_back, can_fwd) = tab_nav_state(new_active);
                                         sync_address_to_chrome(&chrome_wv, &new_active.url, &new_active.title, is_bm, can_back, can_fwd);
+                                        let _ = chrome_wv.evaluate_script(&format!("window.setLoading({});", new_active.is_loading));
                                     }
                                     sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                     save_session_state(&storage, &tabs, active_tab_index);
@@ -1093,6 +1156,41 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         let script = format!("window.updateShieldState({});", adblocker.enabled);
                         let _ = chrome_wv.evaluate_script(&script);
+                    }
+
+                    "stop" => {
+                        if let Some(tab) = tabs.get_mut(active_tab_index) {
+                            tab.is_loading = false;
+                            if let Some(wv) = &tab.webview {
+                                let _ = wv.evaluate_script("window.stop();");
+                            }
+                            let _ = chrome_wv.evaluate_script("window.setLoading(false);");
+                        }
+                    }
+
+                    "set_chrome_expanded" => {
+                        if let Some(payload) = &msg.payload {
+                            let mode = payload["mode"].as_str().unwrap_or("none");
+                            chrome_expansion_mode = mode.to_string();
+                            let h = chrome_expanded_height(mode, current_scale_factor, current_size.height);
+                            let _ = chrome_wv.set_bounds(Rect {
+                                position: PhysicalPosition::new(0, 0).into(),
+                                size: PhysicalSize::new(current_size.width, h).into(),
+                            });
+                            if mode == "full" {
+                                if let Some(tab) = tabs.get(active_tab_index) {
+                                    if let Some(wv) = &tab.webview {
+                                        let _ = wv.set_visible(false);
+                                    }
+                                }
+                            } else {
+                                if let Some(tab) = tabs.get(active_tab_index) {
+                                    if let Some(wv) = &tab.webview {
+                                        let _ = wv.set_visible(true);
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     _ => ()
@@ -1325,9 +1423,11 @@ mod tests {
             webview: None,
             is_audio_playing: true,
             has_form_input: false,
+            is_loading: false,
         };
         // Background audio playing tabs must be exempt from deep hibernation
         assert!(tab.is_audio_playing);
+        assert!(!tab.is_loading);
         assert_eq!(tab.scroll_x, 100);
         assert_eq!(tab.scroll_y, 250);
     }
@@ -1370,5 +1470,56 @@ mod tests {
         let p = dirs_webview_fallback_data_path();
         let s = p.to_string_lossy();
         assert!(s.contains("WebView2Data_"));
+    }
+
+    #[test]
+    fn test_chrome_expanded_height_modes() {
+        let win_h = 1280;
+        // 100% scale (scale_factor = 1.0)
+        assert_eq!(chrome_expanded_height("none", 1.0, win_h), 84);
+        assert_eq!(chrome_expanded_height("dropdown", 1.0, win_h), 84 + 300);
+        assert_eq!(chrome_expanded_height("full", 1.0, win_h), win_h);
+
+        // Surface Go 2 150% scale (scale_factor = 1.5)
+        let base_15x = physical_chrome_height(1.5); // 126
+        let extra_15x = (300.0 * 1.5 as f64).round() as u32; // 450
+        assert_eq!(chrome_expanded_height("none", 1.5, win_h), base_15x);
+        assert_eq!(chrome_expanded_height("dropdown", 1.5, win_h), base_15x + extra_15x);
+        assert_eq!(chrome_expanded_height("full", 1.5, win_h), win_h);
+
+        // Check clamping if dropdown extra exceeds window height
+        let tiny_win_h = 200;
+        assert_eq!(chrome_expanded_height("dropdown", 1.0, tiny_win_h), tiny_win_h);
+    }
+
+    #[test]
+    fn test_security_level_detection() {
+        assert_eq!(get_security_level_for_url("https://example.com"), "secure");
+        assert_eq!(get_security_level_for_url("HTTPS://DUCKDUCKGO.COM/SEARCH"), "secure");
+        assert_eq!(get_security_level_for_url("http://insecure.site"), "insecure");
+        assert_eq!(get_security_level_for_url("http://192.168.1.1"), "insecure");
+        assert_eq!(get_security_level_for_url("file:///C:/Users/test.html"), "local");
+        assert_eq!(get_security_level_for_url("about:blank"), "internal");
+        assert_eq!(get_security_level_for_url("chrome://settings"), "internal");
+    }
+
+    #[test]
+    fn test_tab_loading_state_toggle() {
+        let mut tab = Tab {
+            id: 42,
+            title: "Loading Page".to_string(),
+            url: "https://example.org".to_string(),
+            scroll_x: 0,
+            scroll_y: 0,
+            last_active: std::time::Instant::now(),
+            state: TabState::Active,
+            webview: None,
+            is_audio_playing: false,
+            has_form_input: false,
+            is_loading: true,
+        };
+        assert!(tab.is_loading);
+        tab.is_loading = false;
+        assert!(!tab.is_loading);
     }
 }

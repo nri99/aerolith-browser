@@ -31,23 +31,43 @@ pub fn get_chrome_html() -> &'static str {
     padding: 0;
     user-select: none;
     -webkit-user-select: none;
+    touch-action: manipulation;
   }
 
-  body {
-    background: var(--bg-primary);
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
     color: var(--text-primary);
     font-family: var(--font);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .chrome-header {
     height: 84px;
-    overflow: hidden;
+    background: var(--bg-primary);
     display: flex;
     flex-direction: column;
     border-bottom: 1px solid var(--border-color);
+    position: relative;
+    z-index: 100;
+    flex-shrink: 0;
   }
 
-  /* Row 1: Tab Strip */
-  .tab-strip {
+  /* Row 1: Tab Bar Container */
+  .tab-bar-container {
     height: 38px;
     background: #0d0e12;
+    display: flex;
+    align-items: stretch;
+    position: relative;
+  }
+
+  .tab-strip {
+    flex: 1;
     display: flex;
     align-items: flex-end;
     padding: 0 8px;
@@ -76,6 +96,7 @@ pub fn get_chrome_html() -> &'static str {
     cursor: pointer;
     position: relative;
     transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
   }
   .tab:hover {
     background: var(--bg-hover);
@@ -104,19 +125,23 @@ pub fn get_chrome_html() -> &'static str {
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* Touch-optimized Close Tab Button */
   .tab-close {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
     cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
   }
   .tab-close:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.18);
     color: #ef4444;
   }
 
@@ -132,14 +157,45 @@ pub fn get_chrome_html() -> &'static str {
     font-size: 18px;
     margin-bottom: 2px;
     transition: background 0.15s;
+    flex-shrink: 0;
   }
   .btn-new-tab:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
   }
 
-  .strip-spacer {
-    flex: 1;
+  /* Sticky Tab Bar Actions (Shield Pill pinned to right) */
+  .tab-bar-actions {
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    background: #0d0e12;
+    border-left: 1px solid var(--border-color);
+    flex-shrink: 0;
+    z-index: 2;
+  }
+
+  .shield-pill {
+    padding: 0 8px;
+    height: 26px;
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--shield-active);
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .shield-pill.inactive {
+    color: var(--shield-inactive);
+  }
+  .shield-pill:hover {
+    background: var(--bg-hover);
   }
 
   /* Row 2: Toolbar & Omnibox */
@@ -164,7 +220,8 @@ pub fn get_chrome_html() -> &'static str {
     justify-content: center;
     font-size: 14px;
     cursor: pointer;
-    transition: background 0.15s, opacity 0.15s;
+    transition: background 0.15s, opacity 0.15s, color 0.15s;
+    flex-shrink: 0;
   }
   .btn-nav:hover:not(:disabled) {
     background: var(--bg-hover);
@@ -175,6 +232,13 @@ pub fn get_chrome_html() -> &'static str {
   .btn-nav:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+  }
+  .btn-nav.active {
+    color: var(--accent);
+    background: var(--bg-hover);
+  }
+  .btn-nav.loading {
+    color: #ef4444;
   }
 
   /* Omnibox */
@@ -203,7 +267,10 @@ pub fn get_chrome_html() -> &'static str {
 
   .omnibox-icon {
     font-size: 13px;
-    opacity: 0.6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: default;
   }
 
   .omnibox-input {
@@ -232,35 +299,13 @@ pub fn get_chrome_html() -> &'static str {
     justify-content: center;
     padding: 4px;
     border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
   }
   .btn-bookmark.bookmarked {
     color: var(--star-active);
   }
   .btn-bookmark:hover {
     background: rgba(255, 255, 255, 0.08);
-  }
-
-  /* Shield Button */
-  .shield-pill {
-    padding: 0 8px;
-    height: 28px;
-    border-radius: var(--radius-md);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--shield-active);
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .shield-pill.inactive {
-    color: var(--shield-inactive);
-  }
-  .shield-pill:hover {
-    background: var(--bg-hover);
   }
 
   /* Suggestions Dropdown */
@@ -272,10 +317,11 @@ pub fn get_chrome_html() -> &'static str {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.65);
     z-index: 1000;
     display: none;
-    overflow: hidden;
+    overflow-y: auto;
+    max-height: 280px;
   }
   .suggestions-dropdown.visible {
     display: block;
@@ -288,6 +334,7 @@ pub fn get_chrome_html() -> &'static str {
     gap: 10px;
     cursor: pointer;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    transition: background 0.15s;
   }
   .suggestion-item:last-child {
     border-bottom: none;
@@ -326,7 +373,7 @@ pub fn get_chrome_html() -> &'static str {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.65);
     z-index: 2000;
     display: none;
   }
@@ -335,16 +382,20 @@ pub fn get_chrome_html() -> &'static str {
   }
 
   .drawer-content {
-    width: 360px;
+    width: 380px;
     height: 100%;
     background: var(--bg-primary);
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
+    box-shadow: 5px 0 25px rgba(0, 0, 0, 0.5);
   }
   .drawer-tabs {
     display: flex;
+    align-items: center;
     border-bottom: 1px solid var(--border-color);
+    padding-right: 8px;
+    background: #0d0e12;
   }
   .drawer-tab {
     flex: 1;
@@ -354,10 +405,29 @@ pub fn get_chrome_html() -> &'static str {
     font-weight: 600;
     color: var(--text-muted);
     cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
   }
   .drawer-tab.active {
     color: var(--accent);
     border-bottom: 2px solid var(--accent);
+  }
+  .drawer-close-btn {
+    width: 30px;
+    height: 30px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+  }
+  .drawer-close-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
   }
   .drawer-list {
     flex: 1;
@@ -365,60 +435,92 @@ pub fn get_chrome_html() -> &'static str {
     padding: 8px;
   }
   .drawer-item {
-    padding: 10px;
+    padding: 10px 12px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    transition: background 0.15s;
   }
   .drawer-item:hover {
     background: var(--bg-hover);
+  }
+  .drawer-footer {
+    padding: 12px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    background: var(--bg-secondary);
+  }
+  .btn-clear-history {
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid #ef4444;
+    background: transparent;
+    color: #ef4444;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn-clear-history:hover {
+    background: #ef4444;
+    color: #ffffff;
   }
 </style>
 </head>
 <body>
 
-  <!-- Row 1: Tabs -->
-  <div class="tab-strip" id="tabStrip">
-    <div class="btn-new-tab" id="btnNewTab" title="New Tab (Ctrl+T)">+</div>
-    <div class="strip-spacer"></div>
-    <div class="shield-pill" id="shieldPill" title="Adblock Shield">
-      <span>🛡️</span>
-      <span id="shieldText">SHIELD ON</span>
+  <div class="chrome-header">
+    <!-- Row 1: Tab Bar Container -->
+    <div class="tab-bar-container">
+      <div class="tab-strip" id="tabStrip">
+        <div class="btn-new-tab" id="btnNewTab" title="New Tab (Ctrl+T)">+</div>
+      </div>
+      <div class="tab-bar-actions">
+        <div class="shield-pill" id="shieldPill" title="Adblock Shield">
+          <span>🛡️</span>
+          <span id="shieldText">SHIELD ON</span>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <!-- Row 2: Toolbar -->
-  <div class="toolbar">
-    <button class="btn-nav" id="btnBack" title="Back" disabled>◀</button>
-    <button class="btn-nav" id="btnForward" title="Forward" disabled>▶</button>
-    <button class="btn-nav" id="btnReload" title="Reload (F5)">⟳</button>
-    <button class="btn-nav" id="btnHome" title="Home">🏠</button>
+    <!-- Row 2: Toolbar -->
+    <div class="toolbar">
+      <button class="btn-nav" id="btnBack" title="Back (Alt+Left)" disabled>◀</button>
+      <button class="btn-nav" id="btnForward" title="Forward (Alt+Right)" disabled>▶</button>
+      <button class="btn-nav" id="btnReload" title="Reload (F5)">⟳</button>
+      <button class="btn-nav" id="btnHome" title="Home">🏠</button>
 
-    <div class="omnibox-container">
-      <div class="omnibox-wrapper">
-        <span class="omnibox-icon" id="securityIcon">🔒</span>
-        <input type="text" class="omnibox-input" id="omniboxInput" placeholder="Search DuckDuckGo or enter URL" spellcheck="false" autocomplete="off" />
-        <button class="btn-bookmark" id="btnBookmark" title="Bookmark Tab">★</button>
+      <div class="omnibox-container">
+        <div class="omnibox-wrapper">
+          <span class="omnibox-icon" id="securityIcon" title="Connection Security">🔒</span>
+          <input type="text" class="omnibox-input" id="omniboxInput" placeholder="Search DuckDuckGo or enter URL" spellcheck="false" autocomplete="off" />
+          <button class="btn-bookmark" id="btnBookmark" title="Bookmark Tab (Ctrl+D)">★</button>
+        </div>
+
+        <div class="suggestions-dropdown" id="suggestionsDropdown"></div>
       </div>
 
-      <div class="suggestions-dropdown" id="suggestionsDropdown"></div>
+      <!-- Quick Tool Buttons -->
+      <button class="btn-nav" id="btnDrawer" title="Bookmarks & History (Ctrl+H)">📚</button>
+      <button class="btn-nav" id="btnReader" title="Reader View (Focus)">📖</button>
+      <button class="btn-nav" id="btnDarkMode" title="Universal Dark Mode">🌙</button>
+      <button class="btn-nav" id="btnKeyboard" title="Open Touch Keyboard">⌨</button>
     </div>
-
-    <!-- Quick Tool Buttons -->
-    <button class="btn-nav" id="btnDrawer" title="Bookmarks & History (Library)">📚</button>
-    <button class="btn-nav" id="btnReader" title="Reader View (Focus)">📖</button>
-    <button class="btn-nav" id="btnDarkMode" title="Universal Dark Mode">🌙</button>
-    <button class="btn-nav" id="btnKeyboard" title="Open Touch Keyboard">⌨</button>
   </div>
 
-  <!-- Drawer Modal -->
+  <!-- Drawer Modal (Full-height slide-over) -->
   <div class="drawer-overlay" id="drawerOverlay">
     <div class="drawer-content">
       <div class="drawer-tabs">
         <div class="drawer-tab active" id="tabBookmarks">Bookmarks</div>
         <div class="drawer-tab" id="tabHistory">History</div>
+        <button class="drawer-close-btn" id="btnDrawerClose" title="Close Drawer (Esc)">✕</button>
       </div>
       <div class="drawer-list" id="drawerList"></div>
+      <div class="drawer-footer" id="drawerFooter" style="display: none;">
+        <button class="btn-clear-history" id="btnClearHistory">Clear Browsing History</button>
+      </div>
     </div>
   </div>
 
@@ -427,12 +529,22 @@ pub fn get_chrome_html() -> &'static str {
   let activeTabIndex = 0;
   let isShieldActive = true;
   let isDarkModeActive = false;
+  let isReaderActive = false;
+  let isPageLoading = false;
   let searchDebounceTimer = null;
   let drawerMode = 'bookmarks'; // 'bookmarks' | 'history'
+  let currentExpandedMode = 'none'; // 'none' | 'dropdown' | 'full'
 
   function postToRust(action, payload) {
     if (window.ipc) {
-      window.ipc.postMessage(JSON.stringify({ action, payload }));
+      window.ipc.postMessage(JSON.stringify({ action, payload: payload || {} }));
+    }
+  }
+
+  function setExpandedMode(mode) {
+    if (currentExpandedMode !== mode) {
+      currentExpandedMode = mode;
+      postToRust('set_chrome_expanded', { mode });
     }
   }
 
@@ -456,37 +568,74 @@ pub fn get_chrome_html() -> &'static str {
   const tabBookmarks = document.getElementById('tabBookmarks');
   const tabHistory = document.getElementById('tabHistory');
   const drawerList = document.getElementById('drawerList');
+  const drawerFooter = document.getElementById('drawerFooter');
+  const btnClearHistory = document.getElementById('btnClearHistory');
+  const btnDrawerClose = document.getElementById('btnDrawerClose');
+  const securityIcon = document.getElementById('securityIcon');
 
   // Navigation handlers
   btnBack.onclick = () => postToRust('back', {});
   btnForward.onclick = () => postToRust('forward', {});
-  btnReload.onclick = () => postToRust('reload', {});
+  btnReload.onclick = () => {
+    if (isPageLoading) {
+      postToRust('stop', {});
+    } else {
+      postToRust('reload', {});
+    }
+  };
   btnHome.onclick = () => postToRust('home', {});
   btnNewTab.onclick = () => postToRust('new_tab', { url: 'https://duckduckgo.com' });
   btnKeyboard.onclick = () => postToRust('launch_keyboard', {});
   btnBookmark.onclick = () => postToRust('toggle_bookmark', {});
   shieldPill.onclick = () => postToRust('toggle_shield', {});
-  btnReader.onclick = () => postToRust('toggle_reader', {});
+  btnReader.onclick = () => {
+    isReaderActive = !isReaderActive;
+    btnReader.classList.toggle('active', isReaderActive);
+    postToRust('toggle_reader', { enabled: isReaderActive });
+  };
   btnDarkMode.onclick = () => {
     isDarkModeActive = !isDarkModeActive;
-    btnDarkMode.style.color = isDarkModeActive ? '#5e6ad2' : 'var(--text-primary)';
+    btnDarkMode.classList.toggle('active', isDarkModeActive);
     postToRust('toggle_dark_mode', { enabled: isDarkModeActive });
   };
 
   // Drawer handlers
+  function openDrawer(mode) {
+    if (mode) {
+      drawerMode = mode;
+      if (mode === 'bookmarks') {
+        tabBookmarks.classList.add('active');
+        tabHistory.classList.remove('active');
+        drawerFooter.style.display = 'none';
+      } else {
+        tabHistory.classList.add('active');
+        tabBookmarks.classList.remove('active');
+        drawerFooter.style.display = 'flex';
+      }
+    }
+    drawerOverlay.classList.add('visible');
+    setExpandedMode('full');
+    loadDrawerContent();
+  }
+
+  function closeDrawer() {
+    drawerOverlay.classList.remove('visible');
+    setExpandedMode('none');
+  }
+
   btnDrawer.onclick = () => {
-    const isVis = drawerOverlay.classList.contains('visible');
-    if (isVis) {
-      drawerOverlay.classList.remove('visible');
+    if (drawerOverlay.classList.contains('visible')) {
+      closeDrawer();
     } else {
-      drawerOverlay.classList.add('visible');
-      loadDrawerContent();
+      openDrawer(drawerMode);
     }
   };
 
+  btnDrawerClose.onclick = () => closeDrawer();
+
   drawerOverlay.onclick = (e) => {
     if (e.target === drawerOverlay) {
-      drawerOverlay.classList.remove('visible');
+      closeDrawer();
     }
   };
 
@@ -494,6 +643,7 @@ pub fn get_chrome_html() -> &'static str {
     drawerMode = 'bookmarks';
     tabBookmarks.classList.add('active');
     tabHistory.classList.remove('active');
+    drawerFooter.style.display = 'none';
     loadDrawerContent();
   };
 
@@ -501,7 +651,12 @@ pub fn get_chrome_html() -> &'static str {
     drawerMode = 'history';
     tabHistory.classList.add('active');
     tabBookmarks.classList.remove('active');
+    drawerFooter.style.display = 'flex';
     loadDrawerContent();
+  };
+
+  btnClearHistory.onclick = () => {
+    postToRust('clear_history', {});
   };
 
   function loadDrawerContent() {
@@ -509,6 +664,22 @@ pub fn get_chrome_html() -> &'static str {
       postToRust('get_bookmarks', {});
     } else {
       postToRust('get_history', {});
+    }
+  }
+
+  // Suggestions Dropdown management
+  function showDropdown() {
+    suggestionsDropdown.classList.add('visible');
+    if (currentExpandedMode !== 'full') {
+      setExpandedMode('dropdown');
+    }
+  }
+
+  function closeSuggestions() {
+    suggestionsDropdown.classList.remove('visible');
+    selectedSuggestionIndex = -1;
+    if (currentExpandedMode === 'dropdown') {
+      setExpandedMode('none');
     }
   }
 
@@ -534,7 +705,7 @@ pub fn get_chrome_html() -> &'static str {
         omniboxInput.value = items[selectedSuggestionIndex].dataset.url || '';
       }
     } else if (e.key === 'Enter') {
-      suggestionsDropdown.classList.remove('visible');
+      closeSuggestions();
       let targetUrl = omniboxInput.value.trim();
       if (isVisible && selectedSuggestionIndex >= 0 && items[selectedSuggestionIndex]) {
         targetUrl = items[selectedSuggestionIndex].dataset.url || targetUrl;
@@ -545,8 +716,11 @@ pub fn get_chrome_html() -> &'static str {
       }
       selectedSuggestionIndex = -1;
     } else if (e.key === 'Escape') {
-      suggestionsDropdown.classList.remove('visible');
-      selectedSuggestionIndex = -1;
+      closeSuggestions();
+      if (tabsState[activeTabIndex]) {
+        omniboxInput.value = tabsState[activeTabIndex].url || '';
+      }
+      omniboxInput.blur();
     }
   });
 
@@ -560,16 +734,52 @@ pub fn get_chrome_html() -> &'static str {
         postToRust('search_query', { query: q });
       }, 50);
     } else {
-      suggestionsDropdown.classList.remove('visible');
+      closeSuggestions();
     }
   });
 
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.omnibox-container')) {
-      suggestionsDropdown.classList.remove('visible');
-      selectedSuggestionIndex = -1;
+      closeSuggestions();
     }
   });
+
+  // Security icon indicator
+  function updateSecurityIcon(url) {
+    if (!securityIcon) return;
+    const lower = (url || '').trim().toLowerCase();
+    if (lower.startsWith('https://')) {
+      securityIcon.textContent = '🔒';
+      securityIcon.title = 'Secure Connection (HTTPS)';
+      securityIcon.style.color = 'var(--shield-active)';
+    } else if (lower.startsWith('http://')) {
+      securityIcon.textContent = '⚠️';
+      securityIcon.title = 'Insecure Connection (HTTP)';
+      securityIcon.style.color = '#ef4444';
+    } else if (lower.startsWith('file://')) {
+      securityIcon.textContent = '📁';
+      securityIcon.title = 'Local File';
+      securityIcon.style.color = 'var(--text-muted)';
+    } else {
+      securityIcon.textContent = '🌐';
+      securityIcon.title = 'Internal Page';
+      securityIcon.style.color = 'var(--text-muted)';
+    }
+  }
+
+  // Loading state
+  window.setLoading = function(loading) {
+    isPageLoading = loading;
+    if (loading) {
+      btnReload.textContent = '✕';
+      btnReload.title = 'Stop Loading (Esc)';
+      btnReload.classList.add('loading');
+    } else {
+      btnReload.textContent = '⟳';
+      btnReload.title = 'Reload (F5)';
+      btnReload.classList.remove('loading');
+    }
+  };
 
   // Exposed functions callable by Rust
   window.updateTabs = function(tabs, activeIdx) {
@@ -626,12 +836,19 @@ pub fn get_chrome_html() -> &'static str {
 
       tabStrip.insertBefore(tabEl, btnNewTab);
     });
+
+    // Auto-scroll active tab into view
+    const activeTabEl = tabStrip.querySelector('.tab.active');
+    if (activeTabEl) {
+      activeTabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
   }
 
   window.updateAddress = function(url, title, canBack, canFwd, isBookmarked) {
     if (document.activeElement !== omniboxInput) {
       omniboxInput.value = url || '';
     }
+    updateSecurityIcon(url);
     btnBack.disabled = !canBack;
     btnForward.disabled = !canFwd;
     if (isBookmarked) {
@@ -645,7 +862,7 @@ pub fn get_chrome_html() -> &'static str {
     suggestionsDropdown.innerHTML = '';
     selectedSuggestionIndex = -1;
     if (!results || results.length === 0 || omniboxInput.value.trim() === '') {
-      suggestionsDropdown.classList.remove('visible');
+      closeSuggestions();
       return;
     }
 
@@ -676,18 +893,32 @@ pub fn get_chrome_html() -> &'static str {
       item.appendChild(icon);
       item.appendChild(textWrap);
 
-      item.onclick = () => onSelectSuggestion(r.url);
+      item.onclick = (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          postToRust('new_tab', { url: r.url });
+        } else {
+          onSelectSuggestion(r.url);
+        }
+      };
+
+      item.onauxclick = (e) => {
+        if (e.button === 1) { // Middle click
+          e.preventDefault();
+          postToRust('new_tab', { url: r.url });
+        }
+      };
+
       suggestionsDropdown.appendChild(item);
     });
 
-    suggestionsDropdown.classList.add('visible');
+    showDropdown();
   };
 
   window.showDrawerData = function(items, mode) {
     drawerList.innerHTML = '';
     if (!items || items.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;';
+      empty.style.cssText = 'padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;';
       empty.textContent = `No ${mode} found`;
       drawerList.appendChild(empty);
       return;
@@ -708,19 +939,33 @@ pub fn get_chrome_html() -> &'static str {
       el.appendChild(titleEl);
       el.appendChild(urlEl);
 
-      el.onclick = () => onSelectDrawerItem(item.url);
+      el.onclick = (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          postToRust('new_tab', { url: item.url });
+        } else {
+          onSelectDrawerItem(item.url);
+        }
+      };
+
+      el.onauxclick = (e) => {
+        if (e.button === 1) { // Middle click
+          e.preventDefault();
+          postToRust('new_tab', { url: item.url });
+        }
+      };
+
       drawerList.appendChild(el);
     });
   };
 
   window.onSelectDrawerItem = function(url) {
-    drawerOverlay.classList.remove('visible');
+    closeDrawer();
     postToRust('navigate', { url });
   };
 
   window.onSelectSuggestion = function(url) {
     omniboxInput.value = url;
-    suggestionsDropdown.classList.remove('visible');
+    closeSuggestions();
     postToRust('navigate', { url });
     omniboxInput.blur();
   };
@@ -736,17 +981,22 @@ pub fn get_chrome_html() -> &'static str {
     }
   };
 
-  function escapeHtml(s) {
-    return (s || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
   // Global Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
+    // Escape: Close drawer or stop page load if active
+    if (e.key === 'Escape') {
+      if (drawerOverlay.classList.contains('visible')) {
+        e.preventDefault();
+        closeDrawer();
+        return;
+      }
+      if (isPageLoading) {
+        e.preventDefault();
+        postToRust('stop', {});
+        return;
+      }
+    }
+
     // Ctrl+T: New Tab
     if (e.ctrlKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
@@ -776,12 +1026,10 @@ pub fn get_chrome_html() -> &'static str {
     // Ctrl+H: Toggle History Drawer
     else if (e.ctrlKey && e.key.toLowerCase() === 'h') {
       e.preventDefault();
-      drawerMode = 'history';
-      tabHistory.classList.add('active');
-      tabBookmarks.classList.remove('active');
-      drawerOverlay.classList.toggle('visible');
-      if (drawerOverlay.classList.contains('visible')) {
-        loadDrawerContent();
+      if (drawerOverlay.classList.contains('visible') && drawerMode === 'history') {
+        closeDrawer();
+      } else {
+        openDrawer('history');
       }
     }
     // Alt+Left: Back
