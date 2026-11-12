@@ -1,0 +1,2 @@
+# By default, build for the host target (e.g. x86_64-pc-windows-msvc or x86_64-pc-windows-gnu)
+# To explicitly cross-compile with GNU: cargo build --target x86_64-pc-windows-gnu
