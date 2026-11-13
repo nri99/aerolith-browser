@@ -434,6 +434,9 @@ impl AdBlocker {
             if (existing) {
                 existing.remove();
                 document.body.style.display = '';
+                if (window.ipc) {
+                    try { window.ipc.postMessage(JSON.stringify({ type: 'reader_closed' })); } catch (e) {}
+                }
                 return;
             }
 
@@ -515,6 +518,9 @@ impl AdBlocker {
             closeBtn.onclick = () => {
                 const el = document.getElementById('aerolith-reader-view');
                 if (el) el.remove();
+                if (window.ipc) {
+                    try { window.ipc.postMessage(JSON.stringify({ type: 'reader_closed' })); } catch (e) {}
+                }
             };
 
             header.appendChild(badge);
@@ -535,12 +541,20 @@ impl AdBlocker {
             readerDiv.appendChild(container);
 
             document.body.appendChild(readerDiv);
+            if (window.ipc) {
+                try { window.ipc.postMessage(JSON.stringify({ type: 'reader_opened' })); } catch (e) {}
+            }
 
             // Escape key dismisses reader mode
             window.addEventListener('keydown', function escReader(e) {
                 if (e.key === 'Escape') {
                     const el = document.getElementById('aerolith-reader-view');
-                    if (el) el.remove();
+                    if (el) {
+                        el.remove();
+                        if (window.ipc) {
+                            try { window.ipc.postMessage(JSON.stringify({ type: 'reader_closed' })); } catch (e) {}
+                        }
+                    }
                     window.removeEventListener('keydown', escReader);
                 }
             });
@@ -603,6 +617,8 @@ mod tests {
         assert!(reader_script.contains("attrName.startsWith('on')"));
         assert!(reader_script.contains("el.removeAttribute(el.attributes[i].name)"));
         assert!(reader_script.contains("h.startsWith('javascript:')"));
+        assert!(reader_script.contains("reader_opened"));
+        assert!(reader_script.contains("reader_closed"));
     }
 
     #[test]

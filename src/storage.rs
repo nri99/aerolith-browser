@@ -244,6 +244,28 @@ impl BrowserStorage {
         list
     }
 
+    pub fn delete_bookmark(&self, url: &str) -> Result<bool, Box<dyn std::error::Error>> {
+        let trimmed_url = url.trim();
+        let write_txn = self.db.begin_write()?;
+        let removed = {
+            let mut table = write_txn.open_table(BOOKMARKS_TABLE)?;
+            table.remove(trimmed_url)?.is_some()
+        };
+        write_txn.commit()?;
+        Ok(removed)
+    }
+
+    pub fn delete_history_item(&self, url: &str) -> Result<bool, Box<dyn std::error::Error>> {
+        let trimmed_url = url.trim();
+        let write_txn = self.db.begin_write()?;
+        let removed = {
+            let mut table = write_txn.open_table(HISTORY_TABLE)?;
+            table.remove(trimmed_url)?.is_some()
+        };
+        write_txn.commit()?;
+        Ok(removed)
+    }
+
     pub fn clear_history(&self) -> Result<(), Box<dyn std::error::Error>> {
         let write_txn = self.db.begin_write()?;
         {
@@ -560,6 +582,34 @@ mod tests {
         let loaded = storage.load_session().expect("Expected session");
         assert_eq!(loaded.tabs.len(), MAX_SESSION_TABS);
         assert_eq!(loaded.active_index, MAX_SESSION_TABS - 1);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_delete_bookmark_and_history_item() {
+        let (storage, path) = temp_test_storage();
+
+        // 1. Test bookmark insertion and deletion
+        storage.toggle_bookmark("https://doc.rust-lang.org", "Rust Docs").unwrap();
+        assert!(storage.is_bookmarked("https://doc.rust-lang.org"));
+        assert_eq!(storage.get_bookmarks().len(), 1);
+
+        let removed_bm = storage.delete_bookmark("https://doc.rust-lang.org").unwrap();
+        assert!(removed_bm);
+        assert!(!storage.is_bookmarked("https://doc.rust-lang.org"));
+        assert_eq!(storage.get_bookmarks().len(), 0);
+
+        // 2. Test history deletion
+        storage.record_visit("https://example.com/page1", "Page 1").unwrap();
+        storage.record_visit("https://example.com/page2", "Page 2").unwrap();
+        assert_eq!(storage.get_recent_history(10).len(), 2);
+
+        let removed_hist = storage.delete_history_item("https://example.com/page1").unwrap();
+        assert!(removed_hist);
+        let remaining = storage.get_recent_history(10);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].url, "https://example.com/page2");
 
         let _ = std::fs::remove_file(path);
     }

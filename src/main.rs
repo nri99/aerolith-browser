@@ -103,6 +103,10 @@ pub enum UserEvent {
         tab_id: usize,
         loading: bool,
     },
+    ReaderStateChanged {
+        tab_id: usize,
+        active: bool,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
@@ -124,6 +128,7 @@ struct Tab {
     is_audio_playing: bool,
     has_form_input: bool,
     is_loading: bool,
+    is_reader_active: bool,
 }
 
 fn clean_js_json(json: &str) -> String {
@@ -226,6 +231,8 @@ fn launch_touch_keyboard() {
         r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
         r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
         "tabtip.exe",
+        r"C:\Windows\System32\osk.exe",
+        "osk.exe",
     ];
     for p in paths {
         if let Ok(_) = Command::new(p).spawn() {
@@ -307,6 +314,18 @@ fn create_content_webview(
                                 scroll_y: y,
                             });
                         }
+                        "reader_closed" => {
+                            let _ = proxy_content_ipc.send_event(UserEvent::ReaderStateChanged {
+                                tab_id,
+                                active: false,
+                            });
+                        }
+                        "reader_opened" => {
+                            let _ = proxy_content_ipc.send_event(UserEvent::ReaderStateChanged {
+                                tab_id,
+                                active: true,
+                            });
+                        }
                         _ => {}
                     }
                 }
@@ -385,6 +404,7 @@ fn create_tab(
         is_audio_playing: false,
         has_form_input: false,
         is_loading: false,
+        is_reader_active: false,
     })
 }
 
@@ -681,10 +701,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            Event::UserEvent(UserEvent::TitleChanged { tab_id, title }) => {
+            Event::UserEvent(UserEvent::ReaderStateChanged { tab_id, active }) => {
                 if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
-                    if !title.is_empty() {
-                        tab.title = title.clone();
+                    tab.is_reader_active = active;
+                }
+                if let Some(active_tab) = tabs.get(active_tab_index) {
+                    if active_tab.id == tab_id {
+                        let script = format!("window.setReaderState({});", active);
+                        let _ = chrome_wv.evaluate_script(&script);
+                    }
+                }
+            }
+
+            Event::UserEvent(UserEvent::TitleChanged { tab_id, title }) => {
+                let sanitized_title = if title.chars().count() > 256 {
+                    title.chars().take(256).collect()
+                } else {
+                    title
+                };
+                if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
+                    if !sanitized_title.is_empty() {
+                        tab.title = sanitized_title.clone();
                     }
                     tab.last_active = std::time::Instant::now();
                 }
@@ -692,8 +729,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if active_tab.id == tab_id {
                         let is_bm = storage.is_bookmarked(&active_tab.url);
                         let (can_back, can_fwd) = tab_nav_state(active_tab);
-                        sync_address_to_chrome(&chrome_wv, &active_tab.url, &title, is_bm, can_back, can_fwd);
-                        let _ = storage.record_visit(&active_tab.url, &title);
+                        sync_address_to_chrome(&chrome_wv, &active_tab.url, &sanitized_title, is_bm, can_back, can_fwd);
+                        let _ = storage.record_visit(&active_tab.url, &sanitized_title);
                     }
                 }
                 sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
@@ -707,6 +744,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     tab.last_active = std::time::Instant::now();
                     tab.is_audio_playing = false;
                     tab.has_form_input = false;
+                    tab.is_reader_active = false;
                     if let Some(wv) = &tab.webview {
                         if adblocker.dark_mode {
                             let _ = wv.evaluate_script(AdBlocker::get_dark_mode_script(true));
@@ -724,6 +762,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         let is_bm = storage.is_bookmarked(&url);
                         let (can_back, can_fwd) = tab_nav_state(active_tab);
                         sync_address_to_chrome(&chrome_wv, &url, &active_tab.title, is_bm, can_back, can_fwd);
+                        let _ = chrome_wv.evaluate_script("window.setReaderState(false);");
                         let _ = storage.record_visit(&url, &active_tab.title);
                         save_session_state(&storage, &tabs, active_tab_index);
                     }
@@ -883,6 +922,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         let (can_back, can_fwd) = tab_nav_state(new_tab);
                                         sync_address_to_chrome(&chrome_wv, &new_tab.url, &new_tab.title, is_bm, can_back, can_fwd);
                                         let _ = chrome_wv.evaluate_script(&format!("window.setLoading({});", new_tab.is_loading));
+                                        let _ = chrome_wv.evaluate_script(&format!("window.setReaderState({});", new_tab.is_reader_active));
                                     }
                                     sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                     save_session_state(&storage, &tabs, active_tab_index);
@@ -951,6 +991,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     let (can_back, can_fwd) = tab_nav_state(active_tab);
                                     sync_address_to_chrome(&chrome_wv, &target_url, "New Tab", is_bm, can_back, can_fwd);
                                     let _ = chrome_wv.evaluate_script("window.setLoading(false);");
+                                    let _ = chrome_wv.evaluate_script("window.setReaderState(false);");
                                 }
                                 sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                 save_session_state(&storage, &tabs, active_tab_index);
@@ -1005,25 +1046,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         let (can_back, can_fwd) = tab_nav_state(new_active);
                                         sync_address_to_chrome(&chrome_wv, &new_active.url, &new_active.title, is_bm, can_back, can_fwd);
                                         let _ = chrome_wv.evaluate_script(&format!("window.setLoading({});", new_active.is_loading));
+                                        let _ = chrome_wv.evaluate_script(&format!("window.setReaderState({});", new_active.is_reader_active));
                                     }
                                     sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                     save_session_state(&storage, &tabs, active_tab_index);
-                                } else if tabs.len() == 1 && idx == 0 {
-                                    if let Some(tab) = tabs.get_mut(0) {
-                                        tab.url = HOME_URL.to_string();
-                                        tab.title = "New Tab".to_string();
-                                        tab.last_active = std::time::Instant::now();
-                                        tab.state = TabState::Active;
-                                        if let Some(wv) = &tab.webview {
-                                            let _ = wv.load_url(HOME_URL);
-                                        }
-                                        let is_bm = storage.is_bookmarked(HOME_URL);
-                                        let (can_back, can_fwd) = tab_nav_state(tab);
-                                        sync_address_to_chrome(&chrome_wv, HOME_URL, "New Tab", is_bm, can_back, can_fwd);
-                                        sync_tabs_to_chrome(&chrome_wv, &tabs, 0);
-                                        save_session_state(&storage, &tabs, 0);
-                                    }
-                                }
+                                 } else if tabs.len() == 1 && idx == 0 {
+                                     if let Some(tab) = tabs.get_mut(0) {
+                                         tab.url = HOME_URL.to_string();
+                                         tab.title = "New Tab".to_string();
+                                         tab.last_active = std::time::Instant::now();
+                                         tab.state = TabState::Active;
+                                         tab.is_loading = false;
+                                         tab.is_reader_active = false;
+                                         if let Some(wv) = &tab.webview {
+                                             let _ = wv.load_url(HOME_URL);
+                                         }
+                                         let is_bm = storage.is_bookmarked(HOME_URL);
+                                         let (can_back, can_fwd) = tab_nav_state(tab);
+                                         sync_address_to_chrome(&chrome_wv, HOME_URL, "New Tab", is_bm, can_back, can_fwd);
+                                         let _ = chrome_wv.evaluate_script("window.setLoading(false);");
+                                         let _ = chrome_wv.evaluate_script("window.setReaderState(false);");
+                                         sync_tabs_to_chrome(&chrome_wv, &tabs, 0);
+                                         save_session_state(&storage, &tabs, 0);
+                                     }
+                                 }
                             }
                         }
                     }
@@ -1135,11 +1181,44 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     "search_query" => {
-                        if let Some(payload) = msg.payload {
+                        if let Some(payload) = &msg.payload {
                             if let Some(query) = payload["query"].as_str() {
                                 let results = storage.search(query, 6);
                                 if let Ok(json) = serde_json::to_string(&results) {
-                                    let script = format!("window.showSearchResults({});", clean_js_json(&json));
+                                    let q_json = clean_js_json(&serde_json::to_string(query).unwrap_or_else(|_| "\"\"".to_string()));
+                                    let script = format!("window.showSearchResults({}, {});", clean_js_json(&json), q_json);
+                                    let _ = chrome_wv.evaluate_script(&script);
+                                }
+                            }
+                        }
+                    }
+
+                    "delete_bookmark" => {
+                        if let Some(payload) = &msg.payload {
+                            if let Some(url) = payload["url"].as_str() {
+                                let _ = storage.delete_bookmark(url);
+                                let bookmarks = storage.get_bookmarks();
+                                if let Ok(json) = serde_json::to_string(&bookmarks) {
+                                    let script = format!("window.showDrawerData({}, 'bookmarks');", clean_js_json(&json));
+                                    let _ = chrome_wv.evaluate_script(&script);
+                                }
+                                if let Some(tab) = tabs.get(active_tab_index) {
+                                    if tab.url == url {
+                                        let (can_back, can_fwd) = tab_nav_state(tab);
+                                        sync_address_to_chrome(&chrome_wv, &tab.url, &tab.title, false, can_back, can_fwd);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    "delete_history_entry" => {
+                        if let Some(payload) = &msg.payload {
+                            if let Some(url) = payload["url"].as_str() {
+                                let _ = storage.delete_history_item(url);
+                                let history = storage.get_recent_history(50);
+                                if let Ok(json) = serde_json::to_string(&history) {
+                                    let script = format!("window.showDrawerData({}, 'history');", clean_js_json(&json));
                                     let _ = chrome_wv.evaluate_script(&script);
                                 }
                             }
@@ -1424,10 +1503,12 @@ mod tests {
             is_audio_playing: true,
             has_form_input: false,
             is_loading: false,
+            is_reader_active: false,
         };
         // Background audio playing tabs must be exempt from deep hibernation
         assert!(tab.is_audio_playing);
         assert!(!tab.is_loading);
+        assert!(!tab.is_reader_active);
         assert_eq!(tab.scroll_x, 100);
         assert_eq!(tab.scroll_y, 250);
     }
@@ -1517,9 +1598,48 @@ mod tests {
             is_audio_playing: false,
             has_form_input: false,
             is_loading: true,
+            is_reader_active: false,
         };
         assert!(tab.is_loading);
         tab.is_loading = false;
         assert!(!tab.is_loading);
+
+        // Test reader state toggle
+        assert!(!tab.is_reader_active);
+        tab.is_reader_active = true;
+        assert!(tab.is_reader_active);
+    }
+
+    #[test]
+    fn test_title_length_clamping() {
+        let normal = "Normal Title - Aerolith";
+        let clamped_normal: String = if normal.chars().count() > 256 {
+            normal.chars().take(256).collect()
+        } else {
+            normal.to_string()
+        };
+        assert_eq!(clamped_normal, normal);
+
+        let giant = "X".repeat(500);
+        let clamped_giant: String = if giant.chars().count() > 256 {
+            giant.chars().take(256).collect()
+        } else {
+            giant
+        };
+        assert_eq!(clamped_giant.len(), 256);
+        assert_eq!(clamped_giant.chars().count(), 256);
+    }
+
+    #[test]
+    fn test_keyboard_paths_contain_osk() {
+        let paths = [
+            r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
+            r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
+            "tabtip.exe",
+            r"C:\Windows\System32\osk.exe",
+            "osk.exe",
+        ];
+        assert!(paths.iter().any(|p| p.contains("osk.exe")));
+        assert!(paths.iter().any(|p| p.contains("TabTip.exe")));
     }
 }

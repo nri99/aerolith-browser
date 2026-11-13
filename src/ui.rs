@@ -34,6 +34,18 @@ pub fn get_chrome_html() -> &'static str {
     touch-action: manipulation;
   }
 
+  /* Accessibility keyboard focus ring */
+  button:focus-visible,
+  .tab:focus-visible,
+  .btn-new-tab:focus-visible,
+  .shield-pill:focus-visible,
+  .drawer-item:focus-visible,
+  .drawer-tab:focus-visible,
+  .drawer-close-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
   html, body {
     margin: 0;
     padding: 0;
@@ -440,9 +452,52 @@ pub fn get_chrome_html() -> &'static str {
     cursor: pointer;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
     transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
-  .drawer-item:hover {
+  .drawer-item:hover, .drawer-item:focus {
     background: var(--bg-hover);
+  }
+  .drawer-item-text {
+    flex: 1;
+    overflow: hidden;
+  }
+  .drawer-item-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .drawer-item-url {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 3px;
+  }
+  .drawer-item-delete {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+  }
+  .drawer-item-delete:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
   }
   .drawer-footer {
     padding: 12px;
@@ -465,6 +520,12 @@ pub fn get_chrome_html() -> &'static str {
   .btn-clear-history:hover {
     background: #ef4444;
     color: #ffffff;
+  }
+  .drawer-loading, .drawer-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
   }
 </style>
 </head>
@@ -532,6 +593,7 @@ pub fn get_chrome_html() -> &'static str {
   let isReaderActive = false;
   let isPageLoading = false;
   let searchDebounceTimer = null;
+  let originalTypedQuery = '';
   let drawerMode = 'bookmarks'; // 'bookmarks' | 'history'
   let currentExpandedMode = 'none'; // 'none' | 'dropdown' | 'full'
 
@@ -573,6 +635,14 @@ pub fn get_chrome_html() -> &'static str {
   const btnDrawerClose = document.getElementById('btnDrawerClose');
   const securityIcon = document.getElementById('securityIcon');
 
+  // Mouse wheel horizontal scrolling for Windows desktop and laptop mice
+  tabStrip.addEventListener('wheel', (e) => {
+    if (e.deltaY !== 0) {
+      e.preventDefault();
+      tabStrip.scrollLeft += e.deltaY;
+    }
+  }, { passive: false });
+
   // Navigation handlers
   btnBack.onclick = () => postToRust('back', {});
   btnForward.onclick = () => postToRust('forward', {});
@@ -588,15 +658,17 @@ pub fn get_chrome_html() -> &'static str {
   btnKeyboard.onclick = () => postToRust('launch_keyboard', {});
   btnBookmark.onclick = () => postToRust('toggle_bookmark', {});
   shieldPill.onclick = () => postToRust('toggle_shield', {});
-  btnReader.onclick = () => {
-    isReaderActive = !isReaderActive;
-    btnReader.classList.toggle('active', isReaderActive);
-    postToRust('toggle_reader', { enabled: isReaderActive });
-  };
+  btnReader.onclick = () => postToRust('toggle_reader', {});
   btnDarkMode.onclick = () => {
     isDarkModeActive = !isDarkModeActive;
     btnDarkMode.classList.toggle('active', isDarkModeActive);
     postToRust('toggle_dark_mode', { enabled: isDarkModeActive });
+  };
+
+  // Reader view state synchronization callable by Rust
+  window.setReaderState = function(active) {
+    isReaderActive = active;
+    btnReader.classList.toggle('active', active);
   };
 
   // Drawer handlers
@@ -613,6 +685,7 @@ pub fn get_chrome_html() -> &'static str {
         drawerFooter.style.display = 'flex';
       }
     }
+    drawerList.innerHTML = '<div class="drawer-loading">Loading...</div>';
     drawerOverlay.classList.add('visible');
     setExpandedMode('full');
     loadDrawerContent();
@@ -644,6 +717,7 @@ pub fn get_chrome_html() -> &'static str {
     tabBookmarks.classList.add('active');
     tabHistory.classList.remove('active');
     drawerFooter.style.display = 'none';
+    drawerList.innerHTML = '<div class="drawer-loading">Loading...</div>';
     loadDrawerContent();
   };
 
@@ -652,6 +726,7 @@ pub fn get_chrome_html() -> &'static str {
     tabHistory.classList.add('active');
     tabBookmarks.classList.remove('active');
     drawerFooter.style.display = 'flex';
+    drawerList.innerHTML = '<div class="drawer-loading">Loading...</div>';
     loadDrawerContent();
   };
 
@@ -683,8 +758,20 @@ pub fn get_chrome_html() -> &'static str {
     }
   }
 
-  // Omnibox Navigation
+  // Omnibox Navigation & Auto-select on focus
   let selectedSuggestionIndex = -1;
+  let isOmniboxFocusing = false;
+
+  omniboxInput.addEventListener('focus', () => {
+    isOmniboxFocusing = true;
+    omniboxInput.select();
+  });
+  omniboxInput.addEventListener('mouseup', (e) => {
+    if (isOmniboxFocusing) {
+      isOmniboxFocusing = false;
+      e.preventDefault();
+    }
+  });
 
   omniboxInput.addEventListener('keydown', (e) => {
     const items = suggestionsDropdown.querySelectorAll('.suggestion-item');
@@ -693,16 +780,31 @@ pub fn get_chrome_html() -> &'static str {
     if (e.key === 'ArrowDown') {
       if (isVisible) {
         e.preventDefault();
-        selectedSuggestionIndex = (selectedSuggestionIndex + 1) % items.length;
-        items.forEach((it, i) => it.classList.toggle('selected', i === selectedSuggestionIndex));
-        omniboxInput.value = items[selectedSuggestionIndex].dataset.url || '';
+        selectedSuggestionIndex += 1;
+        if (selectedSuggestionIndex >= items.length) {
+          selectedSuggestionIndex = -1;
+          omniboxInput.value = originalTypedQuery;
+          items.forEach(it => it.classList.remove('selected'));
+        } else {
+          items.forEach((it, i) => it.classList.toggle('selected', i === selectedSuggestionIndex));
+          omniboxInput.value = items[selectedSuggestionIndex].dataset.url || '';
+        }
       }
     } else if (e.key === 'ArrowUp') {
       if (isVisible) {
         e.preventDefault();
-        selectedSuggestionIndex = selectedSuggestionIndex <= 0 ? items.length - 1 : selectedSuggestionIndex - 1;
-        items.forEach((it, i) => it.classList.toggle('selected', i === selectedSuggestionIndex));
-        omniboxInput.value = items[selectedSuggestionIndex].dataset.url || '';
+        selectedSuggestionIndex -= 1;
+        if (selectedSuggestionIndex < -1) {
+          selectedSuggestionIndex = items.length - 1;
+          items.forEach((it, i) => it.classList.toggle('selected', i === selectedSuggestionIndex));
+          omniboxInput.value = items[selectedSuggestionIndex].dataset.url || '';
+        } else if (selectedSuggestionIndex === -1) {
+          omniboxInput.value = originalTypedQuery;
+          items.forEach(it => it.classList.remove('selected'));
+        } else {
+          items.forEach((it, i) => it.classList.toggle('selected', i === selectedSuggestionIndex));
+          omniboxInput.value = items[selectedSuggestionIndex].dataset.url || '';
+        }
       }
     } else if (e.key === 'Enter') {
       closeSuggestions();
@@ -724,14 +826,15 @@ pub fn get_chrome_html() -> &'static str {
     }
   });
 
-  // Autocomplete search
+  // Autocomplete search with original query retention
   omniboxInput.addEventListener('input', () => {
     clearTimeout(searchDebounceTimer);
     selectedSuggestionIndex = -1;
-    const q = omniboxInput.value.trim();
-    if (q.length > 0) {
+    const q = omniboxInput.value;
+    originalTypedQuery = q;
+    if (q.trim().length > 0) {
       searchDebounceTimer = setTimeout(() => {
-        postToRust('search_query', { query: q });
+        postToRust('search_query', { query: q.trim() });
       }, 50);
     } else {
       closeSuggestions();
@@ -795,6 +898,7 @@ pub fn get_chrome_html() -> &'static str {
     tabsState.forEach((tab, idx) => {
       const tabEl = document.createElement('div');
       tabEl.className = 'tab' + (idx === activeTabIndex ? ' active' : '') + (tab.is_sleeping ? ' sleeping' : '');
+      tabEl.tabIndex = 0;
 
       const iconSpan = document.createElement('span');
       iconSpan.className = 'tab-icon';
@@ -818,6 +922,13 @@ pub fn get_chrome_html() -> &'static str {
 
       tabEl.onclick = (e) => {
         if (!e.target.classList.contains('tab-close')) {
+          postToRust('switch_tab', { index: idx });
+        }
+      };
+
+      tabEl.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
           postToRust('switch_tab', { index: idx });
         }
       };
@@ -858,7 +969,12 @@ pub fn get_chrome_html() -> &'static str {
     }
   };
 
-  window.showSearchResults = function(results) {
+  window.showSearchResults = function(results, query) {
+    // Prevent race conditions where stale query responses overwrite current text
+    if (query !== undefined && query !== omniboxInput.value.trim()) {
+      return;
+    }
+
     suggestionsDropdown.innerHTML = '';
     selectedSuggestionIndex = -1;
     if (!results || results.length === 0 || omniboxInput.value.trim() === '') {
@@ -895,6 +1011,7 @@ pub fn get_chrome_html() -> &'static str {
 
       item.onclick = (e) => {
         if (e.ctrlKey || e.metaKey) {
+          closeSuggestions();
           postToRust('new_tab', { url: r.url });
         } else {
           onSelectSuggestion(r.url);
@@ -904,6 +1021,7 @@ pub fn get_chrome_html() -> &'static str {
       item.onauxclick = (e) => {
         if (e.button === 1) { // Middle click
           e.preventDefault();
+          closeSuggestions();
           postToRust('new_tab', { url: r.url });
         }
       };
@@ -918,7 +1036,7 @@ pub fn get_chrome_html() -> &'static str {
     drawerList.innerHTML = '';
     if (!items || items.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;';
+      empty.className = 'drawer-empty';
       empty.textContent = `No ${mode} found`;
       drawerList.appendChild(empty);
       return;
@@ -927,19 +1045,39 @@ pub fn get_chrome_html() -> &'static str {
     items.forEach(item => {
       const el = document.createElement('div');
       el.className = 'drawer-item';
+      el.tabIndex = 0;
+
+      const textWrap = document.createElement('div');
+      textWrap.className = 'drawer-item-text';
 
       const titleEl = document.createElement('div');
-      titleEl.style.cssText = 'font-size: 12px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+      titleEl.className = 'drawer-item-title';
       titleEl.textContent = item.title || item.url;
 
       const urlEl = document.createElement('div');
-      urlEl.style.cssText = 'font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px;';
+      urlEl.className = 'drawer-item-url';
       urlEl.textContent = item.url;
 
-      el.appendChild(titleEl);
-      el.appendChild(urlEl);
+      textWrap.appendChild(titleEl);
+      textWrap.appendChild(urlEl);
+      el.appendChild(textWrap);
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'drawer-item-delete';
+      deleteBtn.title = `Delete from ${mode} (Del)`;
+      deleteBtn.textContent = '✕';
+      deleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (mode === 'bookmarks') {
+          postToRust('delete_bookmark', { url: item.url });
+        } else {
+          postToRust('delete_history_entry', { url: item.url });
+        }
+      };
+      el.appendChild(deleteBtn);
 
       el.onclick = (e) => {
+        if (e.target === deleteBtn) return;
         if (e.ctrlKey || e.metaKey) {
           postToRust('new_tab', { url: item.url });
         } else {
@@ -951,6 +1089,22 @@ pub fn get_chrome_html() -> &'static str {
         if (e.button === 1) { // Middle click
           e.preventDefault();
           postToRust('new_tab', { url: item.url });
+        }
+      };
+
+      el.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          if (e.ctrlKey || e.metaKey) {
+            postToRust('new_tab', { url: item.url });
+          } else {
+            onSelectDrawerItem(item.url);
+          }
+        } else if (e.key === 'Delete') {
+          if (mode === 'bookmarks') {
+            postToRust('delete_bookmark', { url: item.url });
+          } else {
+            postToRust('delete_history_entry', { url: item.url });
+          }
         }
       };
 
@@ -997,8 +1151,39 @@ pub fn get_chrome_html() -> &'static str {
       }
     }
 
+    // Ctrl+Tab: Next tab
+    if (e.ctrlKey && !e.shiftKey && e.key === 'Tab') {
+      e.preventDefault();
+      if (tabsState.length > 1) {
+        const nextIdx = (activeTabIndex + 1) % tabsState.length;
+        postToRust('switch_tab', { index: nextIdx });
+      }
+    }
+    // Ctrl+Shift+Tab: Previous tab
+    else if (e.ctrlKey && e.shiftKey && e.key === 'Tab') {
+      e.preventDefault();
+      if (tabsState.length > 1) {
+        const prevIdx = (activeTabIndex + tabsState.length - 1) % tabsState.length;
+        postToRust('switch_tab', { index: prevIdx });
+      }
+    }
+    // Ctrl+1 through Ctrl+8: Direct tab select
+    else if (e.ctrlKey && e.key >= '1' && e.key <= '8') {
+      e.preventDefault();
+      const targetIdx = parseInt(e.key, 10) - 1;
+      if (targetIdx < tabsState.length) {
+        postToRust('switch_tab', { index: targetIdx });
+      }
+    }
+    // Ctrl+9: Select last tab
+    else if (e.ctrlKey && e.key === '9') {
+      e.preventDefault();
+      if (tabsState.length > 0) {
+        postToRust('switch_tab', { index: tabsState.length - 1 });
+      }
+    }
     // Ctrl+T: New Tab
-    if (e.ctrlKey && e.key.toLowerCase() === 't') {
+    else if (e.ctrlKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
       postToRust('new_tab', { url: 'https://duckduckgo.com' });
     }
