@@ -488,7 +488,10 @@ impl AdBlocker {
                 }
             }
 
-            document.addEventListener('play', () => {
+            document.addEventListener('play', (e) => {
+                if (document.documentElement.dataset.aerolithTabMuted === 'true' && e.target && 'muted' in e.target) {
+                    e.target.muted = true;
+                }
                 document.documentElement.dataset.aerolithMediaPlaying = 'true';
                 __aerolithNotifyHost('media_playing', { value: true });
             }, true);

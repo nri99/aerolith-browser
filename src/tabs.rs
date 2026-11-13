@@ -439,17 +439,34 @@ impl TabManager {
     pub fn close_other_tabs(
         &mut self,
         keep_index: usize,
+        win: &Window,
+        proxy: &EventLoopProxy<UserEvent>,
         bounds: Rect,
+        adblock: &AdBlocker,
+        data_dir: &PathBuf,
         chrome_wv: &WebView,
         storage: &BrowserStorage,
     ) {
         if self.close_other_tabs_pure(keep_index) > 0 {
             if let Some(cur) = self.active_tab_mut() {
+                cur.last_active = std::time::Instant::now();
                 cur.state = TabState::Active;
-                if let Some(wv) = &cur.webview {
+                if cur.webview.is_none() {
+                    if let Ok(wv) = create_content_webview(cur.id, &cur.url, win, proxy, bounds, adblock, data_dir) {
+                        let _ = wv.set_bounds(bounds);
+                        let _ = wv.set_visible(true);
+                        if cur.scroll_x > 0 || cur.scroll_y > 0 {
+                            let restore_script = AdBlocker::get_tab_restore_script(cur.scroll_x, cur.scroll_y);
+                            let _ = wv.evaluate_script(&restore_script);
+                        }
+                        cur.webview = Some(wv);
+                    }
+                } else if let Some(wv) = &cur.webview {
                     let _ = wv.set_bounds(bounds);
                     let _ = wv.set_visible(true);
                 }
+                let _ = chrome_wv.evaluate_script(&format!("window.setLoading({});", cur.is_loading));
+                let _ = chrome_wv.evaluate_script(&format!("window.setReaderState({});", cur.is_reader_active));
             }
             self.sync_address_to_chrome(chrome_wv, storage);
             self.sync_tabs_to_chrome(chrome_wv);
@@ -486,17 +503,34 @@ impl TabManager {
     pub fn close_tabs_to_right(
         &mut self,
         index: usize,
+        win: &Window,
+        proxy: &EventLoopProxy<UserEvent>,
         bounds: Rect,
+        adblock: &AdBlocker,
+        data_dir: &PathBuf,
         chrome_wv: &WebView,
         storage: &BrowserStorage,
     ) {
         if self.close_tabs_to_right_pure(index) > 0 {
             if let Some(cur) = self.active_tab_mut() {
+                cur.last_active = std::time::Instant::now();
                 cur.state = TabState::Active;
-                if let Some(wv) = &cur.webview {
+                if cur.webview.is_none() {
+                    if let Ok(wv) = create_content_webview(cur.id, &cur.url, win, proxy, bounds, adblock, data_dir) {
+                        let _ = wv.set_bounds(bounds);
+                        let _ = wv.set_visible(true);
+                        if cur.scroll_x > 0 || cur.scroll_y > 0 {
+                            let restore_script = AdBlocker::get_tab_restore_script(cur.scroll_x, cur.scroll_y);
+                            let _ = wv.evaluate_script(&restore_script);
+                        }
+                        cur.webview = Some(wv);
+                    }
+                } else if let Some(wv) = &cur.webview {
                     let _ = wv.set_bounds(bounds);
                     let _ = wv.set_visible(true);
                 }
+                let _ = chrome_wv.evaluate_script(&format!("window.setLoading({});", cur.is_loading));
+                let _ = chrome_wv.evaluate_script(&format!("window.setReaderState({});", cur.is_reader_active));
             }
             self.sync_address_to_chrome(chrome_wv, storage);
             self.sync_tabs_to_chrome(chrome_wv);
@@ -581,13 +615,14 @@ impl TabManager {
                     r#"
                     (function() {{
                         try {{
+                            document.documentElement.dataset.aerolithTabMuted = '{}';
                             document.querySelectorAll('audio, video').forEach(el => {{
                                 el.muted = {};
                             }});
                         }} catch(e) {{}}
                     }})();
                     "#,
-                    mute_val
+                    mute_val, mute_val
                 );
                 let _ = wv.evaluate_script(&mute_script);
             }

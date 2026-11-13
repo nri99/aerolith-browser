@@ -132,7 +132,16 @@ fn handle_chrome_msg(
         "close_other_tabs" => {
             if let Some(payload) = &msg.payload {
                 if let Some(idx) = payload["index"].as_u64() {
-                    tab_mgr.close_other_tabs(idx as usize, bounds, chrome_wv, storage);
+                    tab_mgr.close_other_tabs(
+                        idx as usize,
+                        window,
+                        proxy,
+                        bounds,
+                        adblocker,
+                        webview_data_dir,
+                        chrome_wv,
+                        storage,
+                    );
                     reassert_chrome_bounds(chrome_wv, chrome_expansion_mode, current_scale_factor, current_size);
                 }
             }
@@ -141,7 +150,16 @@ fn handle_chrome_msg(
         "close_tabs_to_right" => {
             if let Some(payload) = &msg.payload {
                 if let Some(idx) = payload["index"].as_u64() {
-                    tab_mgr.close_tabs_to_right(idx as usize, bounds, chrome_wv, storage);
+                    tab_mgr.close_tabs_to_right(
+                        idx as usize,
+                        window,
+                        proxy,
+                        bounds,
+                        adblocker,
+                        webview_data_dir,
+                        chrome_wv,
+                        storage,
+                    );
                     reassert_chrome_bounds(chrome_wv, chrome_expansion_mode, current_scale_factor, current_size);
                 }
             }
