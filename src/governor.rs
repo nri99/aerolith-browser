@@ -108,18 +108,25 @@ impl MemoryGovernor {
 
         #[cfg(target_os = "macos")]
         {
-            let total_bytes = std::process::Command::new("sysctl")
-                .arg("-n")
-                .arg("hw.memsize")
-                .output()
-                .ok()
-                .and_then(|out| {
-                    String::from_utf8_lossy(&out.stdout)
-                        .trim()
-                        .parse::<u64>()
-                        .ok()
-                })
-                .unwrap_or(8 * 1024 * 1024 * 1024);
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static CACHED_TOTAL_RAM: AtomicU64 = AtomicU64::new(0);
+
+            let mut total_bytes = CACHED_TOTAL_RAM.load(Ordering::Relaxed);
+            if total_bytes == 0 {
+                total_bytes = std::process::Command::new("sysctl")
+                    .arg("-n")
+                    .arg("hw.memsize")
+                    .output()
+                    .ok()
+                    .and_then(|out| {
+                        String::from_utf8_lossy(&out.stdout)
+                            .trim()
+                            .parse::<u64>()
+                            .ok()
+                    })
+                    .unwrap_or(8 * 1024 * 1024 * 1024);
+                CACHED_TOTAL_RAM.store(total_bytes, Ordering::Relaxed);
+            }
 
             let vm_output = std::process::Command::new("vm_stat").output().ok();
             let mut free_pages: u64 = 0;
