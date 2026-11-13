@@ -73,6 +73,8 @@ pub struct TabInfo {
     pub title: String,
     pub url: String,
     pub is_sleeping: bool,
+    pub is_audio_playing: bool,
+    pub is_muted: bool,
 }
 
 pub enum UserEvent {
@@ -129,6 +131,7 @@ struct Tab {
     has_form_input: bool,
     is_loading: bool,
     is_reader_active: bool,
+    is_muted: bool,
 }
 
 fn clean_js_json(json: &str) -> String {
@@ -267,10 +270,19 @@ fn create_content_webview(
     let init_script = format!(
         r#"
         (function() {{
-            const style = document.createElement('style');
-            style.id = 'aerolith-adblock-shield';
-            style.textContent = `{}`;
-            document.head && document.head.appendChild(style);
+            function __injectShield() {{
+                if (document.getElementById('aerolith-adblock-shield')) return;
+                const root = document.head || document.documentElement || document.body;
+                if (root) {{
+                    const style = document.createElement('style');
+                    style.id = 'aerolith-adblock-shield';
+                    style.textContent = `{}`;
+                    root.appendChild(style);
+                }} else {{
+                    document.addEventListener('DOMContentLoaded', __injectShield, {{ once: true }});
+                }}
+            }}
+            __injectShield();
         }})();
         {}
         {}
@@ -297,6 +309,23 @@ fn create_content_webview(
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(req.body()) {
                 if let Some(msg_type) = val["type"].as_str() {
                     match msg_type {
+                        "spa_navigation" => {
+                            let nav_url = val["url"].as_str().unwrap_or("").to_string();
+                            if !nav_url.is_empty() {
+                                let _ = proxy_content_ipc.send_event(UserEvent::UrlChanged {
+                                    tab_id,
+                                    url: nav_url,
+                                });
+                            }
+                            if let Some(title) = val["title"].as_str() {
+                                if !title.is_empty() {
+                                    let _ = proxy_content_ipc.send_event(UserEvent::TitleChanged {
+                                        tab_id,
+                                        title: title.to_string(),
+                                    });
+                                }
+                            }
+                        }
                         "media_playing" => {
                             let playing = val["value"].as_bool().unwrap_or(false);
                             let _ = proxy_content_ipc.send_event(UserEvent::MediaStateChanged { tab_id, playing });
@@ -405,6 +434,7 @@ fn create_tab(
         has_form_input: false,
         is_loading: false,
         is_reader_active: false,
+        is_muted: false,
     })
 }
 
@@ -422,6 +452,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut webview_data_dir = dirs_webview_data_path();
     let storage = BrowserStorage::new(&db_path)?;
     let mut adblocker = AdBlocker::new();
+    adblocker.block_short_form = storage.get_setting_bool("block_short_form", true);
 
     let mut current_scale_factor = window.scale_factor();
     let mut current_size = window.inner_size();
@@ -433,6 +464,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let chrome_wv = match WebViewBuilder::new_with_web_context(&mut chrome_context)
         .with_transparent(true)
         .with_focused(true)
+        .with_hotkeys_zoom(false)
         .with_bounds(Rect {
             position: PhysicalPosition::new(0, 0).into(),
             size: PhysicalSize::new(DEFAULT_WIDTH, initial_chrome_h).into(),
@@ -454,6 +486,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let wv = WebViewBuilder::new_with_web_context(&mut fallback_context)
                 .with_transparent(true)
                 .with_focused(true)
+                .with_hotkeys_zoom(false)
                 .with_bounds(Rect {
                     position: PhysicalPosition::new(0, 0).into(),
                     size: PhysicalSize::new(DEFAULT_WIDTH, initial_chrome_h).into(),
@@ -472,6 +505,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Tab state
     let mut tabs: Vec<Tab> = Vec::new();
+    let mut closed_tabs: Vec<String> = Vec::new();
     let mut active_tab_index;
     let mut next_tab_id = 1;
 
@@ -496,6 +530,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 title: t.title.clone(),
                 url: t.url.clone(),
                 is_sleeping: t.state != TabState::Active,
+                is_audio_playing: t.is_audio_playing,
+                is_muted: t.is_muted,
             })
             .collect();
         if let Ok(json) = serde_json::to_string(&info_list) {
@@ -532,7 +568,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     for u in &initial_urls {
         let t_id = next_tab_id;
         next_tab_id += 1;
-        if let Ok(t) = create_tab(t_id, u, &window, &proxy, content_rect(current_size, current_scale_factor), &adblocker, &webview_data_dir) {
+        let effective_url = if adblocker.block_short_form && AdBlocker::is_short_form_url(u) {
+            AdBlocker::sanitize_short_form_url(u).unwrap_or_else(|| u.clone())
+        } else {
+            u.clone()
+        };
+        if let Ok(t) = create_tab(t_id, &effective_url, &window, &proxy, content_rect(current_size, current_scale_factor), &adblocker, &webview_data_dir) {
             tabs.push(t);
         }
     }
@@ -674,6 +715,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
                     tab.is_audio_playing = playing;
                 }
+                sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
             }
 
             Event::UserEvent(UserEvent::FormDirtyChanged { tab_id, dirty }) => {
@@ -737,20 +779,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Event::UserEvent(UserEvent::UrlChanged { tab_id, url }) => {
+                let effective_url = if adblocker.block_short_form && AdBlocker::is_short_form_url(&url) {
+                    AdBlocker::sanitize_short_form_url(&url).unwrap_or(url)
+                } else {
+                    url
+                };
+
+                let needs_redirect = if let Some(tab) = tabs.iter().find(|t| t.id == tab_id) {
+                    tab.url != effective_url && !effective_url.is_empty()
+                } else {
+                    false
+                };
+
                 if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
-                    if !url.is_empty() {
-                        tab.url = url.clone();
+                    if !effective_url.is_empty() {
+                        tab.url = effective_url.clone();
                     }
                     tab.last_active = std::time::Instant::now();
                     tab.is_audio_playing = false;
                     tab.has_form_input = false;
                     tab.is_reader_active = false;
                     if let Some(wv) = &tab.webview {
+                        if needs_redirect {
+                            let _ = wv.load_url(&effective_url);
+                        }
                         if adblocker.dark_mode {
                             let _ = wv.evaluate_script(AdBlocker::get_dark_mode_script(true));
                         }
                         if adblocker.enabled {
                             let _ = wv.evaluate_script(AdBlocker::get_shield_toggle_script(true));
+                        }
+                        if adblocker.block_short_form {
+                            let _ = wv.evaluate_script(AdBlocker::get_short_form_toggle_script(true));
                         }
                         if tab.scroll_x > 0 || tab.scroll_y > 0 {
                             let _ = wv.evaluate_script(&AdBlocker::get_tab_restore_script(tab.scroll_x, tab.scroll_y));
@@ -759,11 +819,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if let Some(active_tab) = tabs.get(active_tab_index) {
                     if active_tab.id == tab_id {
-                        let is_bm = storage.is_bookmarked(&url);
+                        let is_bm = storage.is_bookmarked(&effective_url);
                         let (can_back, can_fwd) = tab_nav_state(active_tab);
-                        sync_address_to_chrome(&chrome_wv, &url, &active_tab.title, is_bm, can_back, can_fwd);
+                        sync_address_to_chrome(&chrome_wv, &effective_url, &active_tab.title, is_bm, can_back, can_fwd);
                         let _ = chrome_wv.evaluate_script("window.setReaderState(false);");
-                        let _ = storage.record_visit(&url, &active_tab.title);
+                        let _ = storage.record_visit(&effective_url, &active_tab.title);
                         save_session_state(&storage, &tabs, active_tab_index);
                     }
                 }
@@ -771,7 +831,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Event::UserEvent(UserEvent::NewWindow(target_url)) => {
-                let target = normalize_url(&target_url);
+                let mut target = normalize_url(&target_url);
+                if adblocker.block_short_form && AdBlocker::is_short_form_url(&target) {
+                    if let Some(sanitized) = AdBlocker::sanitize_short_form_url(&target) {
+                        target = sanitized;
+                    }
+                }
                 if tabs.len() >= MAX_TABS {
                     // Resource cap: navigate active tab instead of spawning unbounded WebViews
                     if let Some(cur) = tabs.get_mut(active_tab_index) {
@@ -840,12 +905,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             let (can_back, can_fwd) = tab_nav_state(cur);
                             sync_address_to_chrome(&chrome_wv, &cur.url, &cur.title, is_bm, can_back, can_fwd);
                         }
+                        let _ = chrome_wv.evaluate_script(&format!("window.updateShortFormState({});", adblocker.block_short_form));
                     }
 
                     "navigate" => {
                         if let Some(payload) = msg.payload {
                             if let Some(raw_url) = payload["url"].as_str() {
-                                let target_url = normalize_url(raw_url);
+                                let mut target_url = normalize_url(raw_url);
+                                if adblocker.block_short_form && AdBlocker::is_short_form_url(&target_url) {
+                                    if let Some(sanitized) = AdBlocker::sanitize_short_form_url(&target_url) {
+                                        target_url = sanitized;
+                                    }
+                                }
                                 if let Some(tab) = tabs.get_mut(active_tab_index) {
                                     tab.url = target_url.clone();
                                     tab.last_active = std::time::Instant::now();
@@ -936,7 +1007,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             .as_ref()
                             .and_then(|p| p["url"].as_str())
                             .unwrap_or(HOME_URL);
-                        let target_url = normalize_url(raw_url);
+                        let mut target_url = normalize_url(raw_url);
+                        if adblocker.block_short_form && AdBlocker::is_short_form_url(&target_url) {
+                            if let Some(sanitized) = AdBlocker::sanitize_short_form_url(&target_url) {
+                                target_url = sanitized;
+                            }
+                        }
 
                         if tabs.len() >= MAX_TABS {
                             // Reuse active tab if at maximum tab limit
@@ -1006,6 +1082,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 if tabs.len() > 1 && idx < tabs.len() {
                                     let was_active = idx == active_tab_index;
                                     let removed_tab = tabs.remove(idx);
+                                    if !removed_tab.url.is_empty() && removed_tab.url != HOME_URL && removed_tab.url != "about:blank" {
+                                        closed_tabs.push(removed_tab.url.clone());
+                                        if closed_tabs.len() > 30 {
+                                            closed_tabs.remove(0);
+                                        }
+                                    }
                                     if let Some(wv) = &removed_tab.webview {
                                         let _ = wv.set_visible(false);
                                     }
@@ -1052,6 +1134,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     save_session_state(&storage, &tabs, active_tab_index);
                                  } else if tabs.len() == 1 && idx == 0 {
                                      if let Some(tab) = tabs.get_mut(0) {
+                                         if !tab.url.is_empty() && tab.url != HOME_URL && tab.url != "about:blank" {
+                                             closed_tabs.push(tab.url.clone());
+                                             if closed_tabs.len() > 30 {
+                                                 closed_tabs.remove(0);
+                                             }
+                                         }
                                          tab.url = HOME_URL.to_string();
                                          tab.title = "New Tab".to_string();
                                          tab.last_active = std::time::Instant::now();
@@ -1270,6 +1358,163 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
+                    }
+
+                    "reopen_closed_tab" => {
+                        if let Some(target_url) = closed_tabs.pop() {
+                            let new_id = next_tab_id;
+                            next_tab_id += 1;
+                            if tabs.len() < MAX_TABS {
+                                if let Ok(new_tab) = create_tab(
+                                    new_id,
+                                    &target_url,
+                                    &window,
+                                    &proxy,
+                                    content_rect(current_size, current_scale_factor),
+                                    &adblocker,
+                                    &webview_data_dir,
+                                ) {
+                                    if let Some(cur) = tabs.get_mut(active_tab_index) {
+                                        if let Some(wv) = &cur.webview {
+                                            let _ = wv.set_visible(false);
+                                        }
+                                        cur.last_active = std::time::Instant::now();
+                                    }
+                                    tabs.push(new_tab);
+                                    active_tab_index = tabs.len() - 1;
+                                    if let Some(active_tab) = tabs.get(active_tab_index) {
+                                        let is_bm = storage.is_bookmarked(&target_url);
+                                        let (can_back, can_fwd) = tab_nav_state(active_tab);
+                                        sync_address_to_chrome(&chrome_wv, &target_url, "New Tab", is_bm, can_back, can_fwd);
+                                        let _ = chrome_wv.evaluate_script("window.setLoading(false);");
+                                        let _ = chrome_wv.evaluate_script("window.setReaderState(false);");
+                                    }
+                                    sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
+                                    save_session_state(&storage, &tabs, active_tab_index);
+                                }
+                            } else if let Some(cur) = tabs.get_mut(active_tab_index) {
+                                cur.url = target_url.clone();
+                                cur.last_active = std::time::Instant::now();
+                                cur.state = TabState::Active;
+                                if let Some(wv) = &cur.webview {
+                                    let _ = wv.load_url(&target_url);
+                                }
+                                let is_bm = storage.is_bookmarked(&target_url);
+                                let (can_back, can_fwd) = tab_nav_state(cur);
+                                sync_address_to_chrome(&chrome_wv, &target_url, &cur.title, is_bm, can_back, can_fwd);
+                                sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
+                                save_session_state(&storage, &tabs, active_tab_index);
+                            }
+                        }
+                    }
+
+                    "toggle_mute" => {
+                        if let Some(payload) = &msg.payload {
+                            if let Some(target_idx) = payload["index"].as_u64() {
+                                let idx = target_idx as usize;
+                                if let Some(tab) = tabs.get_mut(idx) {
+                                    tab.is_muted = !tab.is_muted;
+                                    let mute_val = tab.is_muted;
+                                    if let Some(wv) = &tab.webview {
+                                        let mute_script = format!(
+                                            r#"
+                                            (function() {{
+                                                try {{
+                                                    document.querySelectorAll('audio, video').forEach(el => {{
+                                                        el.muted = {};
+                                                    }});
+                                                }} catch(e) {{}}
+                                            }})();
+                                            "#,
+                                            mute_val
+                                        );
+                                        let _ = wv.evaluate_script(&mute_script);
+                                    }
+                                    sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
+                                }
+                            }
+                        }
+                    }
+
+                    "find_in_page" => {
+                        if let Some(payload) = &msg.payload {
+                            let query = payload["query"].as_str().unwrap_or("");
+                            let backward = payload["backward"].as_bool().unwrap_or(false);
+                            if let Some(tab) = tabs.get(active_tab_index) {
+                                if let Some(wv) = &tab.webview {
+                                    let clean_q = clean_js_json(&serde_json::to_string(query).unwrap_or_default());
+                                    let find_script = format!(
+                                        r#"
+                                        (function() {{
+                                            try {{
+                                                const q = {};
+                                                if (q) {{
+                                                    window.find(q, false, {}, true, false, false, false);
+                                                }}
+                                            }} catch(e) {{}}
+                                        }})();
+                                        "#,
+                                        clean_q, backward
+                                    );
+                                    let _ = wv.evaluate_script(&find_script);
+                                }
+                            }
+                        }
+                    }
+
+                    "zoom_in" => {
+                        if let Some(tab) = tabs.get(active_tab_index) {
+                            if let Some(wv) = &tab.webview {
+                                let _ = wv.evaluate_script(r#"
+                                    (function() {
+                                        const cur = parseFloat(document.body.style.zoom || '1.0');
+                                        if (cur < 3.0) {
+                                            document.body.style.zoom = (cur + 0.1).toFixed(2);
+                                        }
+                                    })();
+                                "#);
+                            }
+                        }
+                    }
+
+                    "zoom_out" => {
+                        if let Some(tab) = tabs.get(active_tab_index) {
+                            if let Some(wv) = &tab.webview {
+                                let _ = wv.evaluate_script(r#"
+                                    (function() {
+                                        const cur = parseFloat(document.body.style.zoom || '1.0');
+                                        if (cur > 0.4) {
+                                            document.body.style.zoom = (cur - 0.1).toFixed(2);
+                                        }
+                                    })();
+                                "#);
+                            }
+                        }
+                    }
+
+                    "zoom_reset" => {
+                        if let Some(tab) = tabs.get(active_tab_index) {
+                            if let Some(wv) = &tab.webview {
+                                let _ = wv.evaluate_script(r#"
+                                    (function() {
+                                        document.body.style.zoom = '1.0';
+                                    })();
+                                "#);
+                            }
+                        }
+                    }
+
+                    "toggle_short_form" => {
+                        adblocker.block_short_form = !adblocker.block_short_form;
+                        let _ = storage.set_setting_bool("block_short_form", adblocker.block_short_form);
+                        let script = AdBlocker::get_short_form_toggle_script(adblocker.block_short_form);
+                        for tab in &tabs {
+                            if let Some(wv) = &tab.webview {
+                                let _ = wv.evaluate_script(script);
+                            }
+                        }
+                        let chrome_script = format!("window.updateShortFormState({});", adblocker.block_short_form);
+                        let _ = chrome_wv.evaluate_script(&chrome_script);
                     }
 
                     _ => ()
@@ -1504,11 +1749,13 @@ mod tests {
             has_form_input: false,
             is_loading: false,
             is_reader_active: false,
+            is_muted: false,
         };
         // Background audio playing tabs must be exempt from deep hibernation
         assert!(tab.is_audio_playing);
         assert!(!tab.is_loading);
         assert!(!tab.is_reader_active);
+        assert!(!tab.is_muted);
         assert_eq!(tab.scroll_x, 100);
         assert_eq!(tab.scroll_y, 250);
     }
@@ -1520,12 +1767,16 @@ mod tests {
             title: "Active Page".to_string(),
             url: "https://example.com".to_string(),
             is_sleeping: false,
+            is_audio_playing: false,
+            is_muted: false,
         };
         let tab_sleep = TabInfo {
             id: 2,
             title: "Sleeping Page".to_string(),
             url: "https://example.org".to_string(),
             is_sleeping: true,
+            is_audio_playing: false,
+            is_muted: false,
         };
 
         let json_active = serde_json::to_string(&tab_active).unwrap();
@@ -1599,6 +1850,7 @@ mod tests {
             has_form_input: false,
             is_loading: true,
             is_reader_active: false,
+            is_muted: false,
         };
         assert!(tab.is_loading);
         tab.is_loading = false;
@@ -1608,6 +1860,48 @@ mod tests {
         assert!(!tab.is_reader_active);
         tab.is_reader_active = true;
         assert!(tab.is_reader_active);
+
+        // Test mute state toggle
+        assert!(!tab.is_muted);
+        tab.is_muted = true;
+        assert!(tab.is_muted);
+    }
+
+    #[test]
+    fn test_tab_info_serialization_audio_and_mute() {
+        let info = TabInfo {
+            id: 1,
+            title: "YouTube Video".to_string(),
+            url: "https://www.youtube.com/watch?v=123".to_string(),
+            is_sleeping: false,
+            is_audio_playing: true,
+            is_muted: false,
+        };
+        let json = serde_json::to_string(&info).expect("Failed to serialize TabInfo");
+        assert!(json.contains("\"is_audio_playing\":true"));
+        assert!(json.contains("\"is_muted\":false"));
+
+        let deserialized: TabInfo = serde_json::from_str(&json).expect("Failed to deserialize TabInfo");
+        assert_eq!(deserialized.id, 1);
+        assert!(deserialized.is_audio_playing);
+        assert!(!deserialized.is_muted);
+    }
+
+    #[test]
+    fn test_closed_tabs_stack_behavior() {
+        let mut closed_tabs: Vec<String> = Vec::new();
+        for i in 1..=35 {
+            let url = format!("https://example.com/page{}", i);
+            closed_tabs.push(url);
+            if closed_tabs.len() > 30 {
+                closed_tabs.remove(0);
+            }
+        }
+        assert_eq!(closed_tabs.len(), 30);
+        // The last closed tab should be page 35
+        assert_eq!(closed_tabs.pop(), Some("https://example.com/page35".to_string()));
+        // Oldest retained should be page 6 (pages 1..5 were trimmed)
+        assert_eq!(closed_tabs.first(), Some(&"https://example.com/page6".to_string()));
     }
 
     #[test]
@@ -1628,6 +1922,26 @@ mod tests {
         };
         assert_eq!(clamped_giant.len(), 256);
         assert_eq!(clamped_giant.chars().count(), 256);
+    }
+
+    #[test]
+    fn test_short_form_url_redirection_pipeline() {
+        let blocker = AdBlocker::new();
+        assert!(blocker.block_short_form);
+
+        // YouTube Shorts URL should be redirected to standard watch
+        let raw_yt = "https://www.youtube.com/shorts/dQw4w9WgXcQ?feature=share";
+        let sanitized = AdBlocker::sanitize_short_form_url(raw_yt);
+        assert_eq!(sanitized, Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=share".to_string()));
+
+        // Instagram Reels URL should be redirected to standard post
+        let raw_ig = "https://www.instagram.com/reel/C3123456789/";
+        let sanitized_ig = AdBlocker::sanitize_short_form_url(raw_ig);
+        assert_eq!(sanitized_ig, Some("https://www.instagram.com/p/C3123456789/".to_string()));
+
+        // Standard watch URL remains unchanged
+        let normal_yt = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+        assert_eq!(AdBlocker::sanitize_short_form_url(normal_yt), None);
     }
 
     #[test]

@@ -39,6 +39,7 @@ const TRACKER_DOMAINS: &[&str] = &[
 pub struct AdBlocker {
     pub enabled: bool,
     pub dark_mode: bool,
+    pub block_short_form: bool,
 }
 
 impl AdBlocker {
@@ -46,7 +47,106 @@ impl AdBlocker {
         Self {
             enabled: true,
             dark_mode: false,
+            block_short_form: true,
         }
+    }
+
+    /// Checks if a URL targets short-form algorithmic loops (YouTube Shorts, Instagram Reels, TikTok, Facebook Reels, Snapchat Spotlight)
+    pub fn is_short_form_url(url: &str) -> bool {
+        let lower = url.trim().to_lowercase();
+        if lower.contains("youtube.com/shorts/") || lower.contains("youtu.be/shorts/") {
+            return true;
+        }
+        if lower.contains("instagram.com/reel/") || lower.contains("instagram.com/reels") {
+            return true;
+        }
+        if lower.contains("tiktok.com") {
+            return true;
+        }
+        if lower.contains("facebook.com/reel/") || lower.contains("facebook.com/reels") {
+            return true;
+        }
+        if lower.contains("snapchat.com/spotlight") {
+            return true;
+        }
+        false
+    }
+
+    /// Rewrites short-form algorithmic dopamine trap URLs into standard intentional layouts
+    /// - YouTube Shorts (`/shorts/{id}`) -> Desktop Watch (`/watch?v={id}`)
+    /// - Instagram Reels (`/reel/{id}`) -> Standard Post (`/p/{id}/`)
+    /// - Instagram Reels Feed (`/reels/`) -> Instagram Home (`https://www.instagram.com/`)
+    /// - Facebook Reels (`/reel/{id}`) -> Facebook Watch (`/watch/?v={id}`)
+    /// - Facebook Reels Feed (`/reels/`) -> Facebook Home (`https://www.facebook.com/`)
+    /// - TikTok (`tiktok.com`) -> Focused mindful block notice
+    pub fn sanitize_short_form_url(url: &str) -> Option<String> {
+        let trimmed = url.trim();
+        let lower = trimmed.to_lowercase();
+
+        // 1. YouTube Shorts: https://(www.|m.)?youtube.com/shorts/{id}(?query) -> https://www.youtube.com/watch?v={id}(&query)
+        if lower.contains("youtube.com/shorts/") || lower.contains("youtu.be/shorts/") {
+            let marker = "/shorts/";
+            if let Some(idx) = lower.find(marker) {
+                let after_shorts = &trimmed[idx + marker.len()..];
+                // Video ID ends at '/', '?', '#', or end of string
+                let id_end = after_shorts.find(|c| c == '/' || c == '?' || c == '#').unwrap_or(after_shorts.len());
+                let video_id = &after_shorts[..id_end];
+                if !video_id.is_empty() {
+                    let remainder = &after_shorts[id_end..];
+                    let extra_query = if remainder.starts_with('?') {
+                        // Replace '?' with '&' since we already have ?v=
+                        format!("&{}", &remainder[1..])
+                    } else if let Some(q_pos) = remainder.find('?') {
+                        format!("&{}", &remainder[q_pos + 1..])
+                    } else {
+                        String::new()
+                    };
+                    return Some(format!("https://www.youtube.com/watch?v={}{}", video_id, extra_query));
+                }
+            }
+        }
+
+        // 2. Instagram Reels: /reel/{id} -> /p/{id}/, /reels/ -> /
+        if lower.contains("instagram.com/reel/") {
+            let marker = "instagram.com/reel/";
+            if let Some(idx) = lower.find(marker) {
+                let after_reel = &trimmed[idx + marker.len()..];
+                let id_end = after_reel.find(|c| c == '/' || c == '?' || c == '#').unwrap_or(after_reel.len());
+                let reel_id = &after_reel[..id_end];
+                if !reel_id.is_empty() {
+                    return Some(format!("https://www.instagram.com/p/{}/", reel_id));
+                }
+            }
+        } else if lower.contains("instagram.com/reels") {
+            return Some("https://www.instagram.com/".to_string());
+        }
+
+        // 3. Facebook Reels: /reel/{id} -> /watch/?v={id}, /reels/ -> /
+        if lower.contains("facebook.com/reel/") {
+            let marker = "facebook.com/reel/";
+            if let Some(idx) = lower.find(marker) {
+                let after_reel = &trimmed[idx + marker.len()..];
+                let id_end = after_reel.find(|c| c == '/' || c == '?' || c == '#').unwrap_or(after_reel.len());
+                let reel_id = &after_reel[..id_end];
+                if !reel_id.is_empty() {
+                    return Some(format!("https://www.facebook.com/watch/?v={}", reel_id));
+                }
+            }
+        } else if lower.contains("facebook.com/reels") {
+            return Some("https://www.facebook.com/".to_string());
+        }
+
+        // 4. TikTok: Dedicated short-form video platform
+        if lower.contains("tiktok.com") {
+            return Some("about:blank#short_form_blocked".to_string());
+        }
+
+        // 5. Snapchat Spotlight
+        if lower.contains("snapchat.com/spotlight") {
+            return Some("https://www.snapchat.com/".to_string());
+        }
+
+        None
     }
 
     /// Fast domain trie check for known advertising, tracking, and telemetry networks
@@ -86,12 +186,8 @@ impl AdBlocker {
         }
     }
 
-    /// Returns cosmetic CSS rule injected into all pages to hide common ad frames and banners
-    pub fn get_cosmetic_css(&self) -> &'static str {
-        if !self.enabled {
-            return "";
-        }
-
+    /// Cosmetic CSS hiding common ad frames, banners, and sponsored widgets
+    pub fn get_ad_cosmetic_css() -> &'static str {
         r#"
         /* Aerolith High-Performance Surface Go 2 Ad Shield */
         div[id*="google_ads"],
@@ -121,6 +217,121 @@ impl AdBlocker {
             pointer-events: none !important;
         }
         "#
+    }
+
+    /// Cosmetic CSS hiding infinite short-form content loops (YouTube Shorts, Reels, Spotlight)
+    pub fn get_short_form_css() -> &'static str {
+        r#"
+        /* Aerolith Surface Go 2 Short-Form Content Shield */
+        ytd-reel-shelf-renderer,
+        ytd-rich-shelf-renderer[is-shorts],
+        ytd-rich-section-renderer:has(ytd-rich-shelf-renderer[is-shorts]),
+        ytd-guide-entry-renderer:has(a[title="Shorts"]),
+        ytd-guide-entry-renderer:has(a[href*="/shorts"]),
+        ytd-mini-guide-entry-renderer[aria-label="Shorts"],
+        ytd-mini-guide-entry-renderer:has(a[href*="/shorts"]),
+        a[title="Shorts"],
+        a[href^="/shorts"],
+        a[href*="/shorts/"],
+        ytd-notification-renderer:has(a[href*="/shorts/"]),
+        #shorts-container,
+        ytd-shorts,
+        ytm-reel-shelf-renderer,
+        ytm-pivot-bar-item-renderer:has([aria-label="Shorts"]),
+        ytm-compact-show-renderer:has(a[href*="/shorts"]),
+        a[href*="/reels/"],
+        a[href^="/reel/"],
+        a[href*="/reel/"],
+        svg[aria-label="Reels"],
+        div:has(> svg[aria-label="Reels"]),
+        div[aria-label*="Reels"],
+        div[data-pagelet*="Reels"],
+        a[href*="snapchat.com/spotlight"],
+        a[href^="/shorts/"] {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            width: 0 !important;
+            max-height: 0 !important;
+            max-width: 0 !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            overflow: hidden !important;
+        }
+        "#
+    }
+
+    /// Returns cosmetic CSS rule injected into all pages to hide common ad frames and short-form loops
+    pub fn get_cosmetic_css(&self) -> String {
+        let mut css = String::new();
+        if self.enabled {
+            css.push_str(Self::get_ad_cosmetic_css());
+        }
+        if self.block_short_form {
+            css.push_str(Self::get_short_form_css());
+        }
+        css
+    }
+
+    /// Script to dynamically toggle short-form content shield on existing open tabs
+    pub fn get_short_form_toggle_script(enable: bool) -> &'static str {
+        if enable {
+            r#"
+            (function() {
+                let s = document.getElementById('aerolith-short-form-shield');
+                if (!s) {
+                    s = document.createElement('style');
+                    s.id = 'aerolith-short-form-shield';
+                    s.textContent = `
+                        ytd-reel-shelf-renderer,
+                        ytd-rich-shelf-renderer[is-shorts],
+                        ytd-rich-section-renderer:has(ytd-rich-shelf-renderer[is-shorts]),
+                        ytd-guide-entry-renderer:has(a[title="Shorts"]),
+                        ytd-guide-entry-renderer:has(a[href*="/shorts"]),
+                        ytd-mini-guide-entry-renderer[aria-label="Shorts"],
+                        ytd-mini-guide-entry-renderer:has(a[href*="/shorts"]),
+                        a[title="Shorts"],
+                        a[href^="/shorts"],
+                        a[href*="/shorts/"],
+                        ytd-notification-renderer:has(a[href*="/shorts/"]),
+                        #shorts-container,
+                        ytd-shorts,
+                        ytm-reel-shelf-renderer,
+                        ytm-pivot-bar-item-renderer:has([aria-label="Shorts"]),
+                        ytm-compact-show-renderer:has(a[href*="/shorts"]),
+                        a[href*="/reels/"],
+                        a[href^="/reel/"],
+                        a[href*="/reel/"],
+                        svg[aria-label="Reels"],
+                        div:has(> svg[aria-label="Reels"]),
+                        div[aria-label*="Reels"],
+                        div[data-pagelet*="Reels"],
+                        a[href*="snapchat.com/spotlight"],
+                        a[href^="/shorts/"] {
+                            display: none !important;
+                            visibility: hidden !important;
+                            height: 0 !important;
+                            width: 0 !important;
+                            max-height: 0 !important;
+                            max-width: 0 !important;
+                            opacity: 0 !important;
+                            pointer-events: none !important;
+                            overflow: hidden !important;
+                        }
+                    `;
+                    const root = document.head || document.documentElement || document.body;
+                    root && root.appendChild(s);
+                }
+            })();
+            "#
+        } else {
+            r#"
+            (function() {
+                const s = document.getElementById('aerolith-short-form-shield');
+                if (s) s.remove();
+            })();
+            "#
+        }
     }
 
     /// Script to dynamically toggle adblock shield on existing open tabs
@@ -160,7 +371,8 @@ impl AdBlocker {
                             pointer-events: none !important;
                         }
                     `;
-                    document.head && document.head.appendChild(s);
+                    const root = document.head || document.documentElement || document.body;
+                    root && root.appendChild(s);
                 }
             })();
             "#
@@ -298,6 +510,100 @@ impl AdBlocker {
                     });
                 }, 150);
             }, { passive: true });
+
+            // 5. Client-Side SPA Navigation & History Tracking (pushState, replaceState, popstate, hashchange)
+            function __aerolithNotifyLocation() {
+                try {
+                    __aerolithRedirectShorts();
+                    __aerolithNotifyHost('spa_navigation', {
+                        url: window.location.href,
+                        title: document.title || ''
+                    });
+                } catch (e) {}
+            }
+
+            if (window.history) {
+                const __origPushState = history.pushState;
+                history.pushState = function() {
+                    const ret = __origPushState.apply(this, arguments);
+                    setTimeout(__aerolithNotifyLocation, 0);
+                    return ret;
+                };
+                const __origReplaceState = history.replaceState;
+                history.replaceState = function() {
+                    const ret = __origReplaceState.apply(this, arguments);
+                    setTimeout(__aerolithNotifyLocation, 0);
+                    return ret;
+                };
+            }
+            window.addEventListener('popstate', __aerolithNotifyLocation);
+            window.addEventListener('hashchange', __aerolithNotifyLocation);
+
+            // 6. Real-Time Short-Form Content Neutralizer (YouTube Shorts & Instagram Reels)
+            function __aerolithRedirectShorts() {
+                try {
+                    const href = window.location.href;
+                    if (href.includes('youtube.com/shorts/')) {
+                        const marker = '/shorts/';
+                        const idx = href.indexOf(marker);
+                        if (idx !== -1) {
+                            const after = href.substring(idx + marker.length);
+                            const idEnd = after.search(/[\/\?\#]/);
+                            const id = idEnd === -1 ? after : after.substring(0, idEnd);
+                            if (id) {
+                                const search = window.location.search ? window.location.search.replace('?', '&') : '';
+                                window.location.replace('https://www.youtube.com/watch?v=' + id + search);
+                            }
+                        }
+                    } else if (href.includes('instagram.com/reel/')) {
+                        const marker = 'instagram.com/reel/';
+                        const idx = href.indexOf(marker);
+                        if (idx !== -1) {
+                            const after = href.substring(idx + marker.length);
+                            const idEnd = after.search(/[\/\?\#]/);
+                            const id = idEnd === -1 ? after : after.substring(0, idEnd);
+                            if (id) {
+                                window.location.replace('https://www.instagram.com/p/' + id + '/');
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+
+            document.addEventListener('click', function(e) {
+                const link = e.target.closest && e.target.closest('a');
+                if (!link || !link.href) return;
+                const u = link.href;
+                if (u.includes('youtube.com/shorts/')) {
+                    const marker = '/shorts/';
+                    const idx = u.indexOf(marker);
+                    if (idx !== -1) {
+                        const after = u.substring(idx + marker.length);
+                        const idEnd = after.search(/[\/\?\#]/);
+                        const id = idEnd === -1 ? after : after.substring(0, idEnd);
+                        if (id) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            window.location.href = 'https://www.youtube.com/watch?v=' + id;
+                        }
+                    }
+                } else if (u.includes('instagram.com/reel/')) {
+                    const marker = 'instagram.com/reel/';
+                    const idx = u.indexOf(marker);
+                    if (idx !== -1) {
+                        const after = u.substring(idx + marker.length);
+                        const idEnd = after.search(/[\/\?\#]/);
+                        const id = idEnd === -1 ? after : after.substring(0, idEnd);
+                        if (id) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            window.location.href = 'https://www.instagram.com/p/' + id + '/';
+                        }
+                    }
+                }
+            }, true);
+
+            __aerolithRedirectShorts();
         })();
         "#
     }
@@ -412,7 +718,8 @@ impl AdBlocker {
                             filter: invert(100%) hue-rotate(180deg) !important;
                         }
                     `;
-                    document.head && document.head.appendChild(el);
+                    const root = document.head || document.documentElement || document.body;
+                    root && root.appendChild(el);
                 }
             })();
             "#
@@ -580,8 +887,100 @@ mod tests {
     fn test_adblock_disabled_returns_empty_css() {
         let mut blocker = AdBlocker::new();
         blocker.enabled = false;
+        blocker.block_short_form = false;
         assert_eq!(blocker.get_cosmetic_css(), "");
         assert_eq!(blocker.get_neutralizer_script(), "");
+    }
+
+    #[test]
+    fn test_is_short_form_url() {
+        assert!(AdBlocker::is_short_form_url("https://www.youtube.com/shorts/dQw4w9WgXcQ"));
+        assert!(AdBlocker::is_short_form_url("https://m.youtube.com/shorts/12345"));
+        assert!(AdBlocker::is_short_form_url("https://youtu.be/shorts/abcdef"));
+        assert!(AdBlocker::is_short_form_url("https://www.instagram.com/reel/C312345/"));
+        assert!(AdBlocker::is_short_form_url("https://instagram.com/reels"));
+        assert!(AdBlocker::is_short_form_url("https://www.tiktok.com/@creator/video/123"));
+        assert!(AdBlocker::is_short_form_url("https://tiktok.com"));
+        assert!(AdBlocker::is_short_form_url("https://www.facebook.com/reel/555123"));
+        assert!(AdBlocker::is_short_form_url("https://facebook.com/reels/"));
+        assert!(AdBlocker::is_short_form_url("https://snapchat.com/spotlight"));
+
+        // Standard non-short-form URLs must return false
+        assert!(!AdBlocker::is_short_form_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
+        assert!(!AdBlocker::is_short_form_url("https://www.instagram.com/p/C312345/"));
+        assert!(!AdBlocker::is_short_form_url("https://duckduckgo.com/?q=shorts"));
+        assert!(!AdBlocker::is_short_form_url("https://github.com/rust-lang/rust"));
+    }
+
+    #[test]
+    fn test_sanitize_short_form_url() {
+        // YouTube Shorts -> Desktop Watch
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://www.youtube.com/shorts/dQw4w9WgXcQ"),
+            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string())
+        );
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://m.youtube.com/shorts/dQw4w9WgXcQ?si=abc123xyz"),
+            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ&si=abc123xyz".to_string())
+        );
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://youtube.com/shorts/abc-123_xyz/"),
+            Some("https://www.youtube.com/watch?v=abc-123_xyz".to_string())
+        );
+
+        // Instagram Reels -> Post / Home
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://www.instagram.com/reel/C7aBcDeFgHi/"),
+            Some("https://www.instagram.com/p/C7aBcDeFgHi/".to_string())
+        );
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://www.instagram.com/reels/"),
+            Some("https://www.instagram.com/".to_string())
+        );
+
+        // Facebook Reels -> Watch / Home
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://www.facebook.com/reel/123456789/"),
+            Some("https://www.facebook.com/watch/?v=123456789".to_string())
+        );
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://www.facebook.com/reels/"),
+            Some("https://www.facebook.com/".to_string())
+        );
+
+        // TikTok -> Block Page
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://www.tiktok.com/@user/video/99999"),
+            Some("about:blank#short_form_blocked".to_string())
+        );
+
+        // Snapchat Spotlight -> Home
+        assert_eq!(
+            AdBlocker::sanitize_short_form_url("https://snapchat.com/spotlight"),
+            Some("https://www.snapchat.com/".to_string())
+        );
+
+        // Normal URLs unchanged
+        assert_eq!(AdBlocker::sanitize_short_form_url("https://www.youtube.com/watch?v=123"), None);
+        assert_eq!(AdBlocker::sanitize_short_form_url("https://duckduckgo.com"), None);
+    }
+
+    #[test]
+    fn test_short_form_cosmetic_css_and_toggle() {
+        let blocker = AdBlocker::new();
+        assert!(blocker.block_short_form);
+        let css = blocker.get_cosmetic_css();
+        assert!(css.contains("ytd-reel-shelf-renderer"));
+        assert!(css.contains("ytd-rich-shelf-renderer[is-shorts]"));
+        assert!(css.contains("a[title=\"Shorts\"]"));
+        assert!(css.contains("a[href*=\"/reels/\"]"));
+
+        let toggle_on = AdBlocker::get_short_form_toggle_script(true);
+        let toggle_off = AdBlocker::get_short_form_toggle_script(false);
+        assert!(toggle_on.contains("aerolith-short-form-shield"));
+        assert!(toggle_on.contains("ytd-reel-shelf-renderer"));
+        assert!(toggle_off.contains("aerolith-short-form-shield"));
+        assert!(toggle_off.contains("s.remove()"));
     }
 
     #[test]

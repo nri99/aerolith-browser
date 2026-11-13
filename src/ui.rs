@@ -41,7 +41,9 @@ pub fn get_chrome_html() -> &'static str {
   .shield-pill:focus-visible,
   .drawer-item:focus-visible,
   .drawer-tab:focus-visible,
-  .drawer-close-btn:focus-visible {
+  .drawer-close-btn:focus-visible,
+  .find-btn:focus-visible,
+  .tab-audio-btn:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
@@ -86,6 +88,8 @@ pub fn get_chrome_html() -> &'static str {
     gap: 4px;
     overflow-x: auto;
     scrollbar-width: none;
+    touch-action: pan-x;
+    -webkit-overflow-scrolling: touch;
   }
   .tab-strip::-webkit-scrollbar { display: none; }
 
@@ -136,6 +140,31 @@ pub fn get_chrome_html() -> &'static str {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Audio Playing / Muted Tab Button */
+  .tab-audio-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  .tab-audio-btn.muted {
+    color: var(--text-muted);
+    opacity: 0.65;
+  }
+  .tab-audio-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    opacity: 1;
   }
 
   /* Touch-optimized Close Tab Button */
@@ -248,6 +277,10 @@ pub fn get_chrome_html() -> &'static str {
   .btn-nav.active {
     color: var(--accent);
     background: var(--bg-hover);
+  }
+  #btnShortForm.active {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.15);
   }
   .btn-nav.loading {
     color: #ef4444;
@@ -376,6 +409,56 @@ pub fn get_chrome_html() -> &'static str {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* In-Page Search Bar */
+  .find-bar {
+    position: absolute;
+    top: 45px;
+    right: 12px;
+    height: 34px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    display: none;
+    align-items: center;
+    padding: 0 6px 0 10px;
+    gap: 4px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+    z-index: 1500;
+  }
+  .find-bar.visible {
+    display: flex;
+  }
+  .find-input {
+    width: 170px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+  }
+  .find-input::placeholder {
+    color: var(--text-muted);
+  }
+  .find-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .find-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
   }
 
   /* Drawer Modal */
@@ -565,8 +648,17 @@ pub fn get_chrome_html() -> &'static str {
       <!-- Quick Tool Buttons -->
       <button class="btn-nav" id="btnDrawer" title="Bookmarks & History (Ctrl+H)">📚</button>
       <button class="btn-nav" id="btnReader" title="Reader View (Focus)">📖</button>
+      <button class="btn-nav active" id="btnShortForm" title="Focus Shield: Block Short-Form Feeds (YouTube Shorts, Reels, TikTok)">🎯</button>
       <button class="btn-nav" id="btnDarkMode" title="Universal Dark Mode">🌙</button>
       <button class="btn-nav" id="btnKeyboard" title="Open Touch Keyboard">⌨</button>
+    </div>
+
+    <!-- In-Page Find Bar -->
+    <div class="find-bar" id="findBar">
+      <input type="text" class="find-input" id="findInput" placeholder="Find in page..." spellcheck="false" autocomplete="off" />
+      <button class="find-btn" id="btnFindPrev" title="Previous (Shift+Enter)">▲</button>
+      <button class="find-btn" id="btnFindNext" title="Next (Enter)">▼</button>
+      <button class="find-btn" id="btnFindClose" title="Close (Esc)">✕</button>
     </div>
   </div>
 
@@ -623,6 +715,7 @@ pub fn get_chrome_html() -> &'static str {
   const btnBookmark = document.getElementById('btnBookmark');
   const btnDrawer = document.getElementById('btnDrawer');
   const btnReader = document.getElementById('btnReader');
+  const btnShortForm = document.getElementById('btnShortForm');
   const btnDarkMode = document.getElementById('btnDarkMode');
   const omniboxInput = document.getElementById('omniboxInput');
   const suggestionsDropdown = document.getElementById('suggestionsDropdown');
@@ -634,6 +727,63 @@ pub fn get_chrome_html() -> &'static str {
   const btnClearHistory = document.getElementById('btnClearHistory');
   const btnDrawerClose = document.getElementById('btnDrawerClose');
   const securityIcon = document.getElementById('securityIcon');
+  const findBar = document.getElementById('findBar');
+  const findInput = document.getElementById('findInput');
+  const btnFindPrev = document.getElementById('btnFindPrev');
+  const btnFindNext = document.getElementById('btnFindNext');
+  const btnFindClose = document.getElementById('btnFindClose');
+
+  let isShortFormBlocked = true;
+
+  btnShortForm.onclick = () => {
+    postToRust('toggle_short_form', {});
+  };
+
+  window.updateShortFormState = function(enabled) {
+    isShortFormBlocked = enabled;
+    btnShortForm.classList.toggle('active', enabled);
+    btnShortForm.title = enabled
+      ? 'Focus Shield Active: Short-form content blocked (Shorts, Reels, TikTok)'
+      : 'Focus Shield Inactive: Short-form content allowed';
+  };
+
+  function openFindBar() {
+    findBar.classList.add('visible');
+    findInput.focus();
+    findInput.select();
+    if (findInput.value.trim()) {
+      executeFind(false);
+    }
+  }
+
+  function closeFindBar() {
+    findBar.classList.remove('visible');
+  }
+
+  function executeFind(backward) {
+    const q = findInput.value.trim();
+    if (q) {
+      postToRust('find_in_page', { query: q, backward: !!backward });
+    }
+  }
+
+  btnFindClose.onclick = () => closeFindBar();
+  btnFindNext.onclick = () => executeFind(false);
+  btnFindPrev.onclick = () => executeFind(true);
+
+  findInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      executeFind(e.shiftKey);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeFindBar();
+    }
+  });
+
+  findInput.addEventListener('input', () => {
+    executeFind(false);
+  });
 
   // Mouse wheel horizontal scrolling for Windows desktop and laptop mice
   tabStrip.addEventListener('wheel', (e) => {
@@ -918,10 +1068,26 @@ pub fn get_chrome_html() -> &'static str {
 
       tabEl.appendChild(iconSpan);
       tabEl.appendChild(titleSpan);
+
+      if (tab.is_audio_playing || tab.is_muted) {
+        const audioBtn = document.createElement('button');
+        audioBtn.className = 'tab-audio-btn' + (tab.is_muted ? ' muted' : '');
+        audioBtn.title = tab.is_muted ? 'Unmute Tab' : 'Mute Tab';
+        audioBtn.textContent = tab.is_muted ? '🔇' : '🔊';
+        audioBtn.onclick = (e) => {
+          e.stopPropagation();
+          postToRust('toggle_mute', { index: idx });
+        };
+        audioBtn.onpointerdown = (e) => e.stopPropagation();
+        audioBtn.ontouchstart = (e) => e.stopPropagation();
+        audioBtn.onmousedown = (e) => e.stopPropagation();
+        tabEl.appendChild(audioBtn);
+      }
+
       tabEl.appendChild(closeSpan);
 
       tabEl.onclick = (e) => {
-        if (!e.target.classList.contains('tab-close')) {
+        if (!e.target.closest('.tab-close') && !e.target.closest('.tab-audio-btn')) {
           postToRust('switch_tab', { index: idx });
         }
       };
@@ -940,6 +1106,9 @@ pub fn get_chrome_html() -> &'static str {
         }
       };
 
+      closeSpan.onpointerdown = (e) => e.stopPropagation();
+      closeSpan.ontouchstart = (e) => e.stopPropagation();
+      closeSpan.onmousedown = (e) => e.stopPropagation();
       closeSpan.onclick = (e) => {
         e.stopPropagation();
         postToRust('close_tab', { index: idx });
@@ -1137,8 +1306,13 @@ pub fn get_chrome_html() -> &'static str {
 
   // Global Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
-    // Escape: Close drawer or stop page load if active
+    // Escape: Close find bar, drawer, or stop page load if active
     if (e.key === 'Escape') {
+      if (findBar && findBar.classList.contains('visible')) {
+        e.preventDefault();
+        closeFindBar();
+        return;
+      }
       if (drawerOverlay.classList.contains('visible')) {
         e.preventDefault();
         closeDrawer();
@@ -1151,8 +1325,33 @@ pub fn get_chrome_html() -> &'static str {
       }
     }
 
+    // Ctrl+Shift+T: Reopen Closed Tab
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      postToRust('reopen_closed_tab', {});
+    }
+    // Ctrl+F: Find in Page
+    else if (e.ctrlKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      openFindBar();
+    }
+    // Ctrl+= or Ctrl++: Zoom in
+    else if (e.ctrlKey && (e.key === '=' || e.key === '+')) {
+      e.preventDefault();
+      postToRust('zoom_in', {});
+    }
+    // Ctrl+-: Zoom out
+    else if (e.ctrlKey && (e.key === '-' || e.key === '_')) {
+      e.preventDefault();
+      postToRust('zoom_out', {});
+    }
+    // Ctrl+0: Reset zoom
+    else if (e.ctrlKey && e.key === '0') {
+      e.preventDefault();
+      postToRust('zoom_reset', {});
+    }
     // Ctrl+Tab: Next tab
-    if (e.ctrlKey && !e.shiftKey && e.key === 'Tab') {
+    else if (e.ctrlKey && !e.shiftKey && e.key === 'Tab') {
       e.preventDefault();
       if (tabsState.length > 1) {
         const nextIdx = (activeTabIndex + 1) % tabsState.length;
@@ -1183,7 +1382,7 @@ pub fn get_chrome_html() -> &'static str {
       }
     }
     // Ctrl+T: New Tab
-    else if (e.ctrlKey && e.key.toLowerCase() === 't') {
+    else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
       postToRust('new_tab', { url: 'https://duckduckgo.com' });
     }

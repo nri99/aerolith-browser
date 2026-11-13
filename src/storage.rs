@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const HISTORY_TABLE: TableDefinition<&str, &str> = TableDefinition::new("history");
 const BOOKMARKS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("bookmarks");
 const SESSION_TABLE: TableDefinition<&str, &str> = TableDefinition::new("session");
+const SETTINGS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("settings");
 
 pub const MAX_SESSION_TABS: usize = 20;
 
@@ -100,6 +101,7 @@ impl BrowserStorage {
             let _ = write_txn.open_table(HISTORY_TABLE)?;
             let _ = write_txn.open_table(BOOKMARKS_TABLE)?;
             let _ = write_txn.open_table(SESSION_TABLE)?;
+            let _ = write_txn.open_table(SETTINGS_TABLE)?;
         }
         write_txn.commit()?;
 
@@ -282,6 +284,27 @@ impl BrowserStorage {
             for key in keys {
                 let _ = table.remove(key.as_str());
             }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_setting_bool(&self, key: &str, default_val: bool) -> bool {
+        if let Ok(read_txn) = self.db.begin_read() {
+            if let Ok(table) = read_txn.open_table(SETTINGS_TABLE) {
+                if let Ok(Some(val)) = table.get(key) {
+                    return val.value() == "true";
+                }
+            }
+        }
+        default_val
+    }
+
+    pub fn set_setting_bool(&self, key: &str, val: bool) -> Result<(), Box<dyn std::error::Error>> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(SETTINGS_TABLE)?;
+            table.insert(key, if val { "true" } else { "false" })?;
         }
         write_txn.commit()?;
         Ok(())
@@ -610,6 +633,25 @@ mod tests {
         let remaining = storage.get_recent_history(10);
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].url, "https://example.com/page2");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_settings_persistence() {
+        let (storage, path) = temp_test_storage();
+
+        // Default value when key does not exist
+        assert!(storage.get_setting_bool("block_short_form", true));
+        assert!(!storage.get_setting_bool("block_short_form", false));
+
+        // Save true and verify
+        storage.set_setting_bool("block_short_form", true).unwrap();
+        assert!(storage.get_setting_bool("block_short_form", false));
+
+        // Save false and verify
+        storage.set_setting_bool("block_short_form", false).unwrap();
+        assert!(!storage.get_setting_bool("block_short_form", true));
 
         let _ = std::fs::remove_file(path);
     }
