@@ -52,6 +52,10 @@ pub fn get_chrome_html() -> &'static str {
     margin: 0;
     padding: 0;
     height: 100%;
+    width: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
     overflow: hidden;
     background: transparent;
     color: var(--text-primary);
@@ -62,6 +66,7 @@ pub fn get_chrome_html() -> &'static str {
 
   .chrome-header {
     height: 84px;
+    width: 100%;
     background: var(--bg-primary);
     display: flex;
     flex-direction: column;
@@ -69,6 +74,7 @@ pub fn get_chrome_html() -> &'static str {
     position: relative;
     z-index: 100;
     flex-shrink: 0;
+    overflow: hidden;
   }
 
   /* Row 1: Tab Bar Container */
@@ -1117,11 +1123,23 @@ pub fn get_chrome_html() -> &'static str {
       tabStrip.insertBefore(tabEl, btnNewTab);
     });
 
-    // Auto-scroll active tab into view
+    // Auto-scroll active tab into view horizontally inside tabStrip without vertical scrolling
     const activeTabEl = tabStrip.querySelector('.tab.active');
     if (activeTabEl) {
-      activeTabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      const tabLeft = activeTabEl.offsetLeft;
+      const tabRight = tabLeft + activeTabEl.offsetWidth;
+      const stripLeft = tabStrip.scrollLeft;
+      const stripRight = stripLeft + tabStrip.clientWidth;
+
+      if (tabLeft < stripLeft) {
+        tabStrip.scrollTo({ left: tabLeft, behavior: 'smooth' });
+      } else if (tabRight > stripRight) {
+        tabStrip.scrollTo({ left: tabRight - tabStrip.clientWidth, behavior: 'smooth' });
+      }
     }
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
   }
 
   window.updateAddress = function(url, title, canBack, canFwd, isBookmarked) {

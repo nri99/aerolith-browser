@@ -406,8 +406,9 @@ fn create_content_webview(
             }
             wry::NewWindowResponse::Deny
         })
-        .build(win)?;
+        .build_as_child(win)?;
 
+    let _ = wv.set_bounds(bounds);
     Ok(wv)
 }
 
@@ -467,7 +468,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_hotkeys_zoom(false)
         .with_bounds(Rect {
             position: PhysicalPosition::new(0, 0).into(),
-            size: PhysicalSize::new(DEFAULT_WIDTH, initial_chrome_h).into(),
+            size: PhysicalSize::new(current_size.width, initial_chrome_h).into(),
         })
         .with_html(get_chrome_html())
         .with_ipc_handler(move |req| {
@@ -475,7 +476,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = proxy_chrome.send_event(UserEvent::Chrome(msg));
             }
         })
-        .build(&window)
+        .build_as_child(&window)
     {
         Ok(wv) => wv,
         Err(_) => {
@@ -489,7 +490,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .with_hotkeys_zoom(false)
                 .with_bounds(Rect {
                     position: PhysicalPosition::new(0, 0).into(),
-                    size: PhysicalSize::new(DEFAULT_WIDTH, initial_chrome_h).into(),
+                    size: PhysicalSize::new(current_size.width, initial_chrome_h).into(),
                 })
                 .with_html(get_chrome_html())
                 .with_ipc_handler(move |req| {
@@ -497,11 +498,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = proxy_chrome_fb.send_event(UserEvent::Chrome(msg));
                     }
                 })
-                .build(&window)?;
+                .build_as_child(&window)?;
             webview_data_dir = fallback_dir;
             wv
         }
     };
+
+    let _ = chrome_wv.set_bounds(Rect {
+        position: PhysicalPosition::new(0, 0).into(),
+        size: PhysicalSize::new(current_size.width, initial_chrome_h).into(),
+    });
+    let _ = chrome_wv.set_visible(true);
 
     // Tab state
     let mut tabs: Vec<Tab> = Vec::new();
@@ -600,9 +607,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     for (idx, tab) in tabs.iter_mut().enumerate() {
         if let Some(wv) = &tab.webview {
+            let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
             let _ = wv.set_visible(idx == active_tab_index);
         }
     }
+    let _ = chrome_wv.set_bounds(Rect {
+        position: PhysicalPosition::new(0, 0).into(),
+        size: PhysicalSize::new(current_size.width, initial_chrome_h).into(),
+    });
+    let _ = chrome_wv.set_visible(true);
 
     let mut chrome_expansion_mode = "none".to_string();
 
@@ -853,6 +866,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 &adblocker,
                                 &webview_data_dir,
                             ) {
+                                let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
                                 let _ = wv.set_visible(true);
                                 cur.webview = Some(wv);
                             }
@@ -862,6 +876,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         let is_bm = storage.is_bookmarked(&target);
                         let (can_back, can_fwd) = tab_nav_state(cur);
                         sync_address_to_chrome(&chrome_wv, &target, &cur.title, is_bm, can_back, can_fwd);
+                        let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                        let _ = chrome_wv.set_bounds(Rect {
+                            position: PhysicalPosition::new(0, 0).into(),
+                            size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                        });
+                        let _ = chrome_wv.set_visible(true);
                         sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                         save_session_state(&storage, &tabs, active_tab_index);
                     }
@@ -877,6 +897,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         &adblocker,
                         &webview_data_dir,
                     ) {
+                        if let Some(wv) = &new_tab.webview {
+                            let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
+                            let _ = wv.set_visible(true);
+                        }
                         if let Some(cur) = tabs.get_mut(active_tab_index) {
                             if let Some(wv) = &cur.webview {
                                 let _ = wv.set_visible(false);
@@ -890,6 +914,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             let (can_back, can_fwd) = tab_nav_state(active_tab);
                             sync_address_to_chrome(&chrome_wv, &target, "New Tab", is_bm, can_back, can_fwd);
                         }
+                        let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                        let _ = chrome_wv.set_bounds(Rect {
+                            position: PhysicalPosition::new(0, 0).into(),
+                            size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                        });
+                        let _ = chrome_wv.set_visible(true);
                         sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                         save_session_state(&storage, &tabs, active_tab_index);
                     }
@@ -932,6 +962,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                             &adblocker,
                                             &webview_data_dir,
                                         ) {
+                                            let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
                                             let _ = wv.set_visible(true);
                                             tab.webview = Some(wv);
                                         }
@@ -942,6 +973,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     let is_bm = storage.is_bookmarked(&target_url);
                                     let (can_back, can_fwd) = tab_nav_state(tab);
                                     sync_address_to_chrome(&chrome_wv, &target_url, &tab.title, is_bm, can_back, can_fwd);
+                                    let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                                    let _ = chrome_wv.set_bounds(Rect {
+                                        position: PhysicalPosition::new(0, 0).into(),
+                                        size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                                    });
+                                    let _ = chrome_wv.set_visible(true);
                                     sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                     save_session_state(&storage, &tabs, active_tab_index);
                                 }
@@ -974,6 +1011,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                                 &adblocker,
                                                 &webview_data_dir,
                                             ) {
+                                                let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
                                                 let _ = wv.set_visible(true);
                                                 if new_tab.scroll_x > 0 || new_tab.scroll_y > 0 {
                                                     let restore_script = AdBlocker::get_tab_restore_script(new_tab.scroll_x, new_tab.scroll_y);
@@ -994,6 +1032,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         sync_address_to_chrome(&chrome_wv, &new_tab.url, &new_tab.title, is_bm, can_back, can_fwd);
                                         let _ = chrome_wv.evaluate_script(&format!("window.setLoading({});", new_tab.is_loading));
                                         let _ = chrome_wv.evaluate_script(&format!("window.setReaderState({});", new_tab.is_reader_active));
+                                        let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                                        let _ = chrome_wv.set_bounds(Rect {
+                                            position: PhysicalPosition::new(0, 0).into(),
+                                            size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                                        });
+                                        let _ = chrome_wv.set_visible(true);
                                     }
                                     sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                     save_session_state(&storage, &tabs, active_tab_index);
@@ -1030,15 +1074,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         &adblocker,
                                         &webview_data_dir,
                                     ) {
+                                        let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
                                         let _ = wv.set_visible(true);
                                         cur.webview = Some(wv);
                                     }
                                 } else if let Some(wv) = &cur.webview {
+                                    let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
+                                    let _ = wv.set_visible(true);
                                     let _ = wv.load_url(&target_url);
                                 }
                                 let is_bm = storage.is_bookmarked(&target_url);
                                 let (can_back, can_fwd) = tab_nav_state(cur);
                                 sync_address_to_chrome(&chrome_wv, &target_url, &cur.title, is_bm, can_back, can_fwd);
+                                let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                                let _ = chrome_wv.set_bounds(Rect {
+                                    position: PhysicalPosition::new(0, 0).into(),
+                                    size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                                });
+                                let _ = chrome_wv.set_visible(true);
                                 sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                 save_session_state(&storage, &tabs, active_tab_index);
                             }
@@ -1054,6 +1107,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 &adblocker,
                                 &webview_data_dir,
                             ) {
+                                if let Some(wv) = &new_tab.webview {
+                                    let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
+                                    let _ = wv.set_visible(true);
+                                }
                                 if let Some(cur) = tabs.get_mut(active_tab_index) {
                                     if let Some(wv) = &cur.webview {
                                         let _ = wv.set_visible(false);
@@ -1069,6 +1126,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     let _ = chrome_wv.evaluate_script("window.setLoading(false);");
                                     let _ = chrome_wv.evaluate_script("window.setReaderState(false);");
                                 }
+                                let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                                let _ = chrome_wv.set_bounds(Rect {
+                                    position: PhysicalPosition::new(0, 0).into(),
+                                    size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                                });
+                                let _ = chrome_wv.set_visible(true);
                                 sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                 save_session_state(&storage, &tabs, active_tab_index);
                             }
@@ -1112,6 +1175,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                                 &adblocker,
                                                 &webview_data_dir,
                                             ) {
+                                                let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
                                                 let _ = wv.set_visible(true);
                                                 if new_active.scroll_x > 0 || new_active.scroll_y > 0 {
                                                     let restore_script = AdBlocker::get_tab_restore_script(new_active.scroll_x, new_active.scroll_y);
@@ -1129,6 +1193,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         sync_address_to_chrome(&chrome_wv, &new_active.url, &new_active.title, is_bm, can_back, can_fwd);
                                         let _ = chrome_wv.evaluate_script(&format!("window.setLoading({});", new_active.is_loading));
                                         let _ = chrome_wv.evaluate_script(&format!("window.setReaderState({});", new_active.is_reader_active));
+                                        let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                                        let _ = chrome_wv.set_bounds(Rect {
+                                            position: PhysicalPosition::new(0, 0).into(),
+                                            size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                                        });
+                                        let _ = chrome_wv.set_visible(true);
                                     }
                                     sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                     save_session_state(&storage, &tabs, active_tab_index);
@@ -1374,6 +1444,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     &adblocker,
                                     &webview_data_dir,
                                 ) {
+                                    if let Some(wv) = &new_tab.webview {
+                                        let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
+                                        let _ = wv.set_visible(true);
+                                    }
                                     if let Some(cur) = tabs.get_mut(active_tab_index) {
                                         if let Some(wv) = &cur.webview {
                                             let _ = wv.set_visible(false);
@@ -1389,6 +1463,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         let _ = chrome_wv.evaluate_script("window.setLoading(false);");
                                         let _ = chrome_wv.evaluate_script("window.setReaderState(false);");
                                     }
+                                    let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                                    let _ = chrome_wv.set_bounds(Rect {
+                                        position: PhysicalPosition::new(0, 0).into(),
+                                        size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                                    });
+                                    let _ = chrome_wv.set_visible(true);
                                     sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                     save_session_state(&storage, &tabs, active_tab_index);
                                 }
@@ -1397,11 +1477,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 cur.last_active = std::time::Instant::now();
                                 cur.state = TabState::Active;
                                 if let Some(wv) = &cur.webview {
+                                    let _ = wv.set_bounds(content_rect(current_size, current_scale_factor));
+                                    let _ = wv.set_visible(true);
                                     let _ = wv.load_url(&target_url);
                                 }
                                 let is_bm = storage.is_bookmarked(&target_url);
                                 let (can_back, can_fwd) = tab_nav_state(cur);
                                 sync_address_to_chrome(&chrome_wv, &target_url, &cur.title, is_bm, can_back, can_fwd);
+                                let chrome_h = chrome_expanded_height(&chrome_expansion_mode, current_scale_factor, current_size.height);
+                                let _ = chrome_wv.set_bounds(Rect {
+                                    position: PhysicalPosition::new(0, 0).into(),
+                                    size: PhysicalSize::new(current_size.width, chrome_h).into(),
+                                });
+                                let _ = chrome_wv.set_visible(true);
                                 sync_tabs_to_chrome(&chrome_wv, &tabs, active_tab_index);
                                 save_session_state(&storage, &tabs, active_tab_index);
                             }
@@ -1955,5 +2043,34 @@ mod tests {
         ];
         assert!(paths.iter().any(|p| p.contains("osk.exe")));
         assert!(paths.iter().any(|p| p.contains("TabTip.exe")));
+    }
+
+    #[test]
+    fn test_tab_bounds_never_obscure_chrome() {
+        // Test multiple scale factors (100% desktop, 125% laptop, 150% Surface Go 2, 200% high-DPI)
+        let scale_factors = [1.0, 1.25, 1.5, 2.0];
+        let window_sizes = [(1280, 853), (1920, 1080), (1920, 1280), (800, 600)];
+
+        for &sf in &scale_factors {
+            let chrome_h = physical_chrome_height(sf);
+            assert!(chrome_h >= 84);
+
+            for &(w, h) in &window_sizes {
+                let win_size = PhysicalSize::new(w, h);
+                let c_rect = content_rect(win_size, sf);
+
+                // Content position y must strictly equal chrome height so content never covers chrome
+                let pos: (f64, f64) = c_rect.position.to_logical::<f64>(1.0).into();
+                assert_eq!(pos.0 as i32, 0);
+                assert_eq!(pos.1 as u32, chrome_h, "Content rect y must begin at physical chrome height");
+
+                // Content bounds and chrome bounds must have zero overlap
+                let size: (f64, f64) = c_rect.size.to_logical::<f64>(1.0).into();
+                let content_top = pos.1 as u32;
+                let content_bottom = content_top + size.1 as u32;
+                assert!(content_top >= chrome_h);
+                assert!(content_bottom >= content_top);
+            }
+        }
     }
 }
