@@ -1,9 +1,14 @@
 const TRACKER_DOMAINS: &[&str] = &[
+    // Core Google & Ad Networks
     "doubleclick.net",
     "googlesyndication.com",
     "adservice.google.com",
     "google-analytics.com",
     "googleanalytics.com",
+    "analytics.google.com",
+    "stats.g.doubleclick.net",
+    "pagead2.googlesyndication.com",
+    // Major Ad Exchanges & Retargeters
     "scorecardresearch.com",
     "taboola.com",
     "outbrain.com",
@@ -27,13 +32,65 @@ const TRACKER_DOMAINS: &[&str] = &[
     "popads.net",
     "popcash.net",
     "propellerads.com",
+    "trafficjunky.com",
+    "zergnet.com",
+    "adroll.com",
+    "appnexus.com",
+    "revcontent.com",
+    "mgid.com",
+    "adpushup.com",
+    "sovrn.com",
+    "infolinks.com",
+    "indexexchange.com",
+    "sharethrough.com",
+    "triplelift.com",
+    "gumgum.com",
+    "teads.tv",
+    "connatix.com",
+    "undertone.com",
+    // Social & Pixel Trackers
+    "connect.facebook.net",
+    "pixel.facebook.com",
+    "an.facebook.com",
+    "analytics.tiktok.com",
+    "ads-api.tiktok.com",
+    "static.ads-twitter.com",
+    "analytics.twitter.com",
+    "bat.bing.com",
+    "c.bing.com",
+    // Behavioral & Session Recording Telemetry
     "hotjar.com",
     "amplitude.com",
     "segment.io",
     "segment.com",
     "mixpanel.com",
     "clarity.ms",
+    "fullstory.com",
+    "mouseflow.com",
+    "crazyegg.com",
+    "heapanalytics.com",
+    "loggly.com",
+    "datadoghq.com",
+    "sentry.io",
+    "bugsnag.com",
+    "newrelic.com",
+    "chartbeat.com",
     "mc.yandex.ru",
+    // Attribution & Fingerprint Brokers
+    "appsflyer.com",
+    "adjust.com",
+    "branch.io",
+    "kochava.com",
+    "demdex.net",
+    "bluekai.com",
+    "exelator.com",
+    "krxd.net",
+    "liveramp.com",
+    "tapad.com",
+    "lotame.com",
+    "agkn.com",
+    "fpjs.io",
+    "fingerprintjs.com",
 ];
 
 pub struct AdBlocker {
@@ -479,7 +536,133 @@ impl AdBlocker {
                 };
             }
 
-            // 4. Media, Form State & Scroll Tracking for Sleep Exemption & Position Restoration
+            // 4. Anti-Fingerprinting Shield: Canvas Micro-Noise Farbling
+            try {
+                const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+                HTMLCanvasElement.prototype.toDataURL = function() {
+                    const ctx = this.getContext('2d');
+                    if (ctx && this.width > 16 && this.height > 16) {
+                        try {
+                            const imgData = ctx.getImageData(0, 0, Math.min(this.width, 32), Math.min(this.height, 32));
+                            for (let i = 0; i < imgData.data.length; i += 16) {
+                                imgData.data[i] = (imgData.data[i] ^ 1);
+                            }
+                            ctx.putImageData(imgData, 0, 0);
+                        } catch (e) {}
+                    }
+                    return origToDataURL.apply(this, arguments);
+                };
+
+                const origToBlob = HTMLCanvasElement.prototype.toBlob;
+                HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {
+                    const ctx = this.getContext('2d');
+                    if (ctx && this.width > 16 && this.height > 16) {
+                        try {
+                            const imgData = ctx.getImageData(0, 0, Math.min(this.width, 32), Math.min(this.height, 32));
+                            for (let i = 0; i < imgData.data.length; i += 16) {
+                                imgData.data[i] = (imgData.data[i] ^ 1);
+                            }
+                            ctx.putImageData(imgData, 0, 0);
+                        } catch (e) {}
+                    }
+                    return origToBlob.apply(this, arguments);
+                };
+
+                const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+                CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {
+                    const imgData = origGetImageData.apply(this, arguments);
+                    if (sw > 8 && sh > 8 && imgData && imgData.data) {
+                        for (let i = 0; i < imgData.data.length; i += 32) {
+                            imgData.data[i] = (imgData.data[i] ^ 1);
+                        }
+                    }
+                    return imgData;
+                };
+            } catch (e) {}
+
+            // 5. Anti-Fingerprinting Shield: AudioContext Oscillator Noise Injection
+            try {
+                if (window.AudioBuffer) {
+                    const origGetChannelData = AudioBuffer.prototype.getChannelData;
+                    AudioBuffer.prototype.getChannelData = function() {
+                        const buffer = origGetChannelData.apply(this, arguments);
+                        for (let i = 0; i < buffer.length; i += 100) {
+                            buffer[i] += 0.0000001 * (Math.random() - 0.5);
+                        }
+                        return buffer;
+                    };
+                }
+                if (window.AnalyserNode) {
+                    const origGetFloatFrequencyData = AnalyserNode.prototype.getFloatFrequencyData;
+                    AnalyserNode.prototype.getFloatFrequencyData = function(array) {
+                        origGetFloatFrequencyData.apply(this, arguments);
+                        for (let i = 0; i < array.length; i += 10) {
+                            array[i] += 0.0001 * (Math.random() - 0.5);
+                        }
+                    };
+                }
+            } catch (e) {}
+
+            // 6. Anti-Fingerprinting Shield: Hardware & Battery Normalization + DNT & GPC
+            try {
+                if (navigator.getBattery) {
+                    navigator.getBattery = function() {
+                        return Promise.resolve({
+                            charging: true,
+                            chargingTime: 0,
+                            dischargingTime: Infinity,
+                            level: 1.0,
+                            addEventListener: function() {},
+                            removeEventListener: function() {},
+                            dispatchEvent: function() { return false; }
+                        });
+                    };
+                }
+                try { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4, configurable: true }); } catch (e) {}
+                try { Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true }); } catch (e) {}
+                try { Object.defineProperty(navigator, 'doNotTrack', { get: () => "1", configurable: true }); } catch (e) {}
+                try { Object.defineProperty(navigator, 'globalPrivacyControl', { get: () => true, configurable: true }); } catch (e) {}
+                try { Object.defineProperty(window, 'globalPrivacyControl', { get: () => true, configurable: true }); } catch (e) {}
+            } catch (e) {}
+
+            // 7. WebRTC Local Host IP Leak Protection
+            try {
+                if (window.RTCPeerConnection) {
+                    const origAddIceCandidate = RTCPeerConnection.prototype.addIceCandidate;
+                    RTCPeerConnection.prototype.addIceCandidate = function(candidate) {
+                        if (candidate && candidate.candidate) {
+                            const c = candidate.candidate;
+                            if (c.includes(' typ host ') && (
+                                c.includes(' 192.168.') ||
+                                c.includes(' 10.') ||
+                                c.includes(' 172.16.') ||
+                                c.includes(' 172.17.') ||
+                                c.includes(' 172.18.') ||
+                                c.includes(' 172.19.') ||
+                                c.includes(' 172.2') ||
+                                c.includes(' 172.3')
+                            )) {
+                                return Promise.resolve();
+                            }
+                        }
+                        return origAddIceCandidate.apply(this, arguments);
+                    };
+                }
+            } catch (e) {}
+
+            // 8. Hyperlink Auditing (<a ping>) Protection
+            try {
+                const stripPings = () => {
+                    document.querySelectorAll('a[ping]').forEach(a => a.removeAttribute('ping'));
+                };
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', stripPings, { once: true });
+                } else {
+                    stripPings();
+                }
+            } catch (e) {}
+
+            // 9. Media, Form State & Scroll Tracking for Sleep Exemption & Position Restoration
             function __aerolithNotifyHost(type, payload) {
                 if (window.ipc) {
                     try {
@@ -1074,5 +1257,8 @@ mod tests {
         assert!(script.contains("media_playing"));
         assert!(script.contains("ended"));
         assert!(script.contains("scroll"));
+        assert!(script.contains("HTMLCanvasElement.prototype.toDataURL"));
+        assert!(script.contains("globalPrivacyControl"));
+        assert!(script.contains("hardwareConcurrency"));
     }
 }

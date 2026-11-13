@@ -653,11 +653,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Event::UserEvent(UserEvent::UrlChanged { tab_id, url }) => {
-                let was_sanitized = adblocker.block_short_form && AdBlocker::is_short_form_url(&url);
-                let effective_url = if was_sanitized {
-                    AdBlocker::sanitize_short_form_url(&url).unwrap_or(url.clone())
+                let stripped_url = crate::url_utils::strip_tracking_parameters(&url);
+                let was_param_stripped = stripped_url != url;
+                let was_short_form = adblocker.block_short_form && AdBlocker::is_short_form_url(&stripped_url);
+                let was_sanitized = was_short_form || was_param_stripped;
+                let effective_url = if was_short_form {
+                    AdBlocker::sanitize_short_form_url(&stripped_url).unwrap_or(stripped_url)
                 } else {
-                    url.clone()
+                    stripped_url
                 };
 
                 let is_about_home = if let Some(tab) = tab_mgr.tabs.iter().find(|t| t.id == tab_id) {
@@ -708,9 +711,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Event::UserEvent(UserEvent::NewWindow(target_url)) => {
+                let clean_url = crate::url_utils::strip_tracking_parameters(&target_url);
                 let bounds = content_rect(current_size, current_scale_factor);
                 tab_mgr.new_tab(
-                    &target_url,
+                    &clean_url,
                     &window,
                     &proxy,
                     bounds,

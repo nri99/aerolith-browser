@@ -777,7 +777,7 @@ pub fn get_chrome_html() -> &'static str {
         <div class="btn-new-tab" id="btnNewTab" title="New Tab (Ctrl+T)">+</div>
       </div>
       <div class="tab-bar-actions">
-        <div class="shield-pill" id="shieldPill" title="Adblock Shield">
+        <div class="shield-pill" id="shieldPill" title="Aerolith Privacy Shield: Adblocking, Anti-Fingerprinting &amp; URL Tracking Stripper Active">
           <span>🛡️</span>
           <span id="shieldText">SHIELD ON</span>
         </div>
@@ -845,6 +845,26 @@ pub fn get_chrome_html() -> &'static str {
             <input type="checkbox" id="settingsClearOnExit" />
             <span>Clear Browsing History & Session on Exit</span>
           </label>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">Privacy & Fingerprinting Shield</div>
+          <div class="settings-stat-row">
+            <span>Tracker & Ad Blocker:</span>
+            <span class="settings-stat-val" style="color: var(--shield-active)">85+ Networks Active</span>
+          </div>
+          <div class="settings-stat-row">
+            <span>Anti-Fingerprinting:</span>
+            <span class="settings-stat-val" style="color: var(--shield-active)">Canvas & Audio Farbling Active</span>
+          </div>
+          <div class="settings-stat-row">
+            <span>URL Query Cleaner:</span>
+            <span class="settings-stat-val" style="color: var(--shield-active)">Stripping utm_*, fbclid, gclid</span>
+          </div>
+          <div class="settings-stat-row">
+            <span>Global Privacy Control:</span>
+            <span class="settings-stat-val" style="color: var(--shield-active)">GPC & DNT Broadcasting</span>
+          </div>
         </div>
 
         <div class="settings-section">
@@ -2204,6 +2224,7 @@ mod tests {
         assert!(html.contains("id=\"tabSettings\""), "Settings drawer tab must exist");
         assert!(html.contains("id=\"settingsSearchEngine\""), "Search engine selector must exist");
         assert!(html.contains("id=\"btnHibernateAll\""), "Hibernate all button in drawer must exist");
+        assert!(html.contains("Privacy & Fingerprinting Shield"), "Privacy shield section must exist in drawer");
     }
 
     #[test]

@@ -13,6 +13,94 @@ pub fn sanitize_title(title: &str) -> String {
     }
 }
 
+pub const TRACKING_QUERY_PARAMS: &[&str] = &[
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "utm_id",
+    "utm_source_platform",
+    "utm_creative_format",
+    "utm_marketing_tactic",
+    "fbclid",
+    "fbadid",
+    "gclid",
+    "gbraid",
+    "wbraid",
+    "dclid",
+    "msclkid",
+    "twclid",
+    "ttclid",
+    "igshid",
+    "mc_eid",
+    "mc_cid",
+    "_hsenc",
+    "_hsmi",
+    "hscctstracking",
+    "yclid",
+    "wickedid",
+    "zanpid",
+    "si",
+];
+
+pub fn is_tracking_param(name: &str) -> bool {
+    let lower = name.trim().to_lowercase();
+    lower.starts_with("utm_") || TRACKING_QUERY_PARAMS.iter().any(|&tp| tp == lower)
+}
+
+pub fn strip_tracking_parameters(url: &str) -> String {
+    let trimmed = url.trim();
+    if !trimmed.contains('?') {
+        return trimmed.to_string();
+    }
+
+    let (base_and_query, fragment) = match trimmed.find('#') {
+        Some(idx) => (&trimmed[..idx], Some(&trimmed[idx..])),
+        None => (trimmed, None),
+    };
+
+    let q_pos = match base_and_query.find('?') {
+        Some(idx) => idx,
+        None => return trimmed.to_string(),
+    };
+
+    let base = &base_and_query[..q_pos];
+    let query = &base_and_query[q_pos + 1..];
+
+    let mut kept_params = Vec::new();
+    let mut modified = false;
+
+    for param in query.split('&') {
+        if param.is_empty() {
+            continue;
+        }
+        let key = match param.find('=') {
+            Some(eq_pos) => &param[..eq_pos],
+            None => param,
+        };
+        if is_tracking_param(key) {
+            modified = true;
+        } else {
+            kept_params.push(param);
+        }
+    }
+
+    if !modified {
+        return trimmed.to_string();
+    }
+
+    let mut result = base.to_string();
+    if !kept_params.is_empty() {
+        result.push('?');
+        result.push_str(&kept_params.join("&"));
+    }
+    if let Some(frag) = fragment {
+        result.push_str(frag);
+    }
+    result
+}
+
 pub fn build_search_url(query: &str, engine: &str) -> String {
     let encoded = urlencoding_simple(query);
     match engine.trim().to_lowercase().as_str() {
@@ -56,7 +144,7 @@ pub fn normalize_url_with_engine(input: &str, engine: &str) -> String {
 
     // Case-insensitive scheme check for supported navigation protocols
     if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("file://") {
-        return trimmed.to_string();
+        return strip_tracking_parameters(trimmed);
     }
 
     // If input contains another protocol scheme (e.g. ftp://, ws://, gopher://, custom://),
@@ -67,14 +155,14 @@ pub fn normalize_url_with_engine(input: &str, engine: &str) -> String {
 
     // Localhost / Loopback addresses (default to HTTP)
     if lower.starts_with("localhost") || lower.starts_with("127.0.0.1") || lower.starts_with("[::1]") {
-        return format!("http://{}", trimmed);
+        return strip_tracking_parameters(&format!("http://{}", trimmed));
     }
 
     // IPv4 address detection (e.g. 192.168.1.1 or 10.0.0.1:8080)
     let host_part = trimmed.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
     let octets: Vec<&str> = host_part.split('.').collect();
     if octets.len() == 4 && octets.iter().all(|seg| seg.parse::<u8>().is_ok()) {
-        return format!("http://{}", trimmed);
+        return strip_tracking_parameters(&format!("http://{}", trimmed));
     }
 
     // Plausible domain check: no spaces, contains a dot, not a code token (e.g. std::time, v1.0.0)
@@ -86,7 +174,7 @@ pub fn normalize_url_with_engine(input: &str, engine: &str) -> String {
             let tld = parts.last().unwrap_or(&"");
             let tld_alpha = tld.chars().all(|c| c.is_ascii_alphabetic());
             if tld_alpha && tld.len() >= 2 && !parts[0].is_empty() {
-                return format!("https://{}", trimmed);
+                return strip_tracking_parameters(&format!("https://{}", trimmed));
             }
         }
     }
@@ -275,5 +363,26 @@ mod tests {
         assert_eq!(normalize_url_with_engine("about:start", "google"), HOME_URL);
         assert_eq!(normalize_url_with_engine("surface go 2", "google"), "https://www.google.com/search?q=surface+go+2");
         assert_eq!(normalize_url_with_engine("surface go 2", "brave"), "https://search.brave.com/search?q=surface+go+2");
+    }
+
+    #[test]
+    fn test_strip_tracking_parameters() {
+        // Facebook & Google tracking tags
+        let dirty1 = "https://example.com/shop?product=42&utm_source=twitter&utm_medium=cpc&fbclid=IwAR2xyz&gclid=CjwKxyz#details";
+        let clean1 = strip_tracking_parameters(dirty1);
+        assert_eq!(clean1, "https://example.com/shop?product=42#details");
+
+        // Single tracking parameter with no others
+        let dirty2 = "https://example.com/?fbclid=123456";
+        let clean2 = strip_tracking_parameters(dirty2);
+        assert_eq!(clean2, "https://example.com/");
+
+        // Clean URLs remain unchanged
+        let clean_original = "https://example.com/search?q=rust+lang&page=2";
+        assert_eq!(strip_tracking_parameters(clean_original), clean_original);
+
+        // URLs without query string
+        let no_query = "https://example.com/article#intro";
+        assert_eq!(strip_tracking_parameters(no_query), no_query);
     }
 }

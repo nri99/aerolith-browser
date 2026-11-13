@@ -190,6 +190,9 @@ impl TabManager {
         chrome_wv: &WebView,
         storage: &BrowserStorage,
     ) {
+        let clean_url = crate::url_utils::strip_tracking_parameters(target_url);
+        let target_url = &clean_url;
+
         if self.tabs.len() >= MAX_TABS {
             // Cap resources: reuse current tab
             self.navigate(target_url, win, proxy, bounds, adblock, data_dir, chrome_wv, storage);
