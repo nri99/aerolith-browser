@@ -644,6 +644,11 @@ pub fn get_chrome_html() -> &'static str {
   .tab-context-menu-item:hover {
     background: var(--bg-hover);
   }
+  .tab-context-menu-item.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
   .tab-context-menu-separator {
     height: 1px;
     background: var(--border-color);
@@ -974,6 +979,18 @@ pub fn get_chrome_html() -> &'static str {
 
   let contextMenuTabIndex = -1;
 
+  function updateOmniboxPlaceholder(engine) {
+    if (!omniboxInput) return;
+    const names = {
+      'duckduckgo': 'DuckDuckGo',
+      'google': 'Google',
+      'brave': 'Brave',
+      'bing': 'Bing'
+    };
+    const name = names[engine] || 'DuckDuckGo';
+    omniboxInput.placeholder = 'Search ' + name + ' or enter URL';
+  }
+
   function showTabContextMenu(x, y, tabIdx) {
     contextMenuTabIndex = tabIdx;
     tabContextMenu.style.display = 'block';
@@ -984,6 +1001,23 @@ pub fn get_chrome_html() -> &'static str {
     const clampedX = Math.min(x, window.innerWidth - menuWidth);
     tabContextMenu.style.left = clampedX + 'px';
     tabContextMenu.style.top = Math.max(0, y) + 'px';
+
+    const itemCloseOthers = tabContextMenu.querySelector('[data-action="close_others"]');
+    if (itemCloseOthers) {
+      if (tabsState.length <= 1) {
+        itemCloseOthers.classList.add('disabled');
+      } else {
+        itemCloseOthers.classList.remove('disabled');
+      }
+    }
+    const itemCloseRight = tabContextMenu.querySelector('[data-action="close_right"]');
+    if (itemCloseRight) {
+      if (tabIdx >= tabsState.length - 1) {
+        itemCloseRight.classList.add('disabled');
+      } else {
+        itemCloseRight.classList.remove('disabled');
+      }
+    }
   }
 
   function hideTabContextMenu() {
@@ -999,7 +1033,7 @@ pub fn get_chrome_html() -> &'static str {
   if (tabContextMenu) {
     tabContextMenu.addEventListener('click', (e) => {
       const item = e.target.closest('.tab-context-menu-item');
-      if (!item || contextMenuTabIndex < 0) return;
+      if (!item || item.classList.contains('disabled') || contextMenuTabIndex < 0) return;
       const action = item.dataset.action;
       const idx = contextMenuTabIndex;
       hideTabContextMenu();
@@ -1030,6 +1064,7 @@ pub fn get_chrome_html() -> &'static str {
   if (settingsSearchEngine) {
     settingsSearchEngine.onchange = () => {
       postToRust('set_search_engine', { engine: settingsSearchEngine.value });
+      updateOmniboxPlaceholder(settingsSearchEngine.value);
     };
   }
   if (settingsClearOnExit) {
@@ -1040,11 +1075,21 @@ pub fn get_chrome_html() -> &'static str {
   if (btnHibernateAll) {
     btnHibernateAll.onclick = () => {
       postToRust('hibernate_all', {});
+      const orig = btnHibernateAll.textContent;
+      btnHibernateAll.textContent = '💤 Background Tabs Hibernated!';
+      btnHibernateAll.disabled = true;
+      setTimeout(() => {
+        btnHibernateAll.textContent = orig;
+        btnHibernateAll.disabled = false;
+      }, 1500);
     };
   }
 
   window.updateSettingsData = function(engine, clearOnExit, freeMb, loadPct) {
-    if (settingsSearchEngine && engine) settingsSearchEngine.value = engine;
+    if (settingsSearchEngine && engine) {
+      settingsSearchEngine.value = engine;
+      updateOmniboxPlaceholder(engine);
+    }
     if (settingsClearOnExit) settingsClearOnExit.checked = !!clearOnExit;
     if (settingsRamFree) settingsRamFree.textContent = (freeMb !== undefined ? freeMb : '--') + ' MB';
     if (settingsRamLoad) settingsRamLoad.textContent = (loadPct !== undefined ? loadPct : '--') + '%';
@@ -2111,11 +2156,21 @@ pub fn get_speed_dial_html() -> &'static str {
       });
     });
 
-    document.getElementById('btnHomeHibernate').addEventListener('click', () => {
-      const msg = JSON.stringify({ action: 'hibernate_all', payload: {} });
-      if (window.ipc) window.ipc.postMessage(msg);
-      else if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(msg);
-    });
+    const btnHomeHibernate = document.getElementById('btnHomeHibernate');
+    if (btnHomeHibernate) {
+      btnHomeHibernate.addEventListener('click', () => {
+        const msg = JSON.stringify({ action: 'hibernate_all', payload: {} });
+        if (window.ipc) window.ipc.postMessage(msg);
+        else if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(msg);
+        const orig = btnHomeHibernate.textContent;
+        btnHomeHibernate.textContent = 'Tabs Hibernated! 💤';
+        btnHomeHibernate.disabled = true;
+        setTimeout(() => {
+          btnHomeHibernate.textContent = orig;
+          btnHomeHibernate.disabled = false;
+        }, 1500);
+      });
+    }
   </script>
 </body>
 </html>
@@ -2141,6 +2196,8 @@ mod tests {
         assert!(html.contains("id=\"tabContextMenu\""), "Tab context menu element must exist");
         assert!(html.contains("data-action=\"duplicate\""), "Duplicate action in context menu must exist");
         assert!(html.contains("data-action=\"close_others\""), "Close others action in context menu must exist");
+        assert!(html.contains(".tab-context-menu-item.disabled"), "Disabled state for tab context menu items must exist");
+        assert!(html.contains("function updateOmniboxPlaceholder"), "Dynamic omnibox placeholder function must exist");
         assert!(html.contains("id=\"zoomBadge\""), "Zoom badge in omnibox must exist");
         assert!(html.contains("id=\"tabSettings\""), "Settings drawer tab must exist");
         assert!(html.contains("id=\"settingsSearchEngine\""), "Search engine selector must exist");
