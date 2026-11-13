@@ -977,18 +977,22 @@ pub fn get_chrome_html() -> &'static str {
   function showTabContextMenu(x, y, tabIdx) {
     contextMenuTabIndex = tabIdx;
     tabContextMenu.style.display = 'block';
+    if (currentExpandedMode !== 'full') {
+      setExpandedMode('dropdown');
+    }
     const menuWidth = 190;
-    const menuHeight = 260;
     const clampedX = Math.min(x, window.innerWidth - menuWidth);
-    const clampedY = Math.min(y, window.innerHeight - menuHeight);
     tabContextMenu.style.left = clampedX + 'px';
-    tabContextMenu.style.top = clampedY + 'px';
+    tabContextMenu.style.top = Math.max(0, y) + 'px';
   }
 
   function hideTabContextMenu() {
-    if (tabContextMenu) {
+    if (tabContextMenu && tabContextMenu.style.display !== 'none') {
       tabContextMenu.style.display = 'none';
       contextMenuTabIndex = -1;
+      if (currentExpandedMode === 'dropdown') {
+        setExpandedMode('none');
+      }
     }
   }
 
@@ -1692,6 +1696,11 @@ pub fn get_chrome_html() -> &'static str {
   window.addEventListener('keydown', (e) => {
     // Escape: Close find bar, drawer, suggestions dropdown, or stop page load if active
     if (e.key === 'Escape') {
+      if (tabContextMenu && tabContextMenu.style.display !== 'none') {
+        e.preventDefault();
+        hideTabContextMenu();
+        return;
+      }
       if (findBar && findBar.classList.contains('visible')) {
         e.preventDefault();
         closeFindBar();
