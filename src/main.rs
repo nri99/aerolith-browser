@@ -18,7 +18,7 @@ use paths::{dirs_storage_path, dirs_webview_data_path, launch_touch_keyboard, sh
 use storage::BrowserStorage;
 use tabs::{create_tab, TabManager};
 use types::{ChromeMsg, UserEvent, DEFAULT_HEIGHT, DEFAULT_WIDTH, HOME_URL};
-use url_utils::clean_js_json;
+use url_utils::{clean_js_json, sanitize_title};
 use webview_factory::create_chrome_webview;
 
 #[cfg(target_env = "gnu")]
@@ -514,11 +514,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Event::UserEvent(UserEvent::TitleChanged { tab_id, title }) => {
-                let sanitized_title = if title.chars().count() > 256 {
-                    title.chars().take(256).collect()
-                } else {
-                    title
-                };
+                let sanitized_title = sanitize_title(&title);
                 if let Some(tab) = tab_mgr.find_by_id_mut(tab_id) {
                     if !sanitized_title.is_empty() {
                         tab.title = sanitized_title.clone();

@@ -43,15 +43,20 @@ pub fn dirs_webview_fallback_data_path() -> PathBuf {
     }
 }
 
+pub const TOUCH_KEYBOARD_PATHS: &[&str] = &[
+    r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
+    r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
+    "tabtip.exe",
+    r"C:\Windows\System32\osk.exe",
+    "osk.exe",
+];
+
+pub fn touch_keyboard_candidate_paths() -> &'static [&'static str] {
+    TOUCH_KEYBOARD_PATHS
+}
+
 pub fn launch_touch_keyboard() {
-    let paths = [
-        r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
-        r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
-        "tabtip.exe",
-        r"C:\Windows\System32\osk.exe",
-        "osk.exe",
-    ];
-    for p in paths {
+    for p in touch_keyboard_candidate_paths() {
         if let Ok(_) = Command::new(p).spawn() {
             return;
         }
@@ -90,13 +95,7 @@ mod tests {
 
     #[test]
     fn test_keyboard_paths_contain_osk() {
-        let paths = [
-            r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
-            r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
-            "tabtip.exe",
-            r"C:\Windows\System32\osk.exe",
-            "osk.exe",
-        ];
+        let paths = touch_keyboard_candidate_paths();
         assert!(paths.iter().any(|p| p.contains("osk.exe")));
         assert!(paths.iter().any(|p| p.contains("TabTip.exe")));
     }

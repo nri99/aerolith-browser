@@ -104,6 +104,19 @@ impl TabManager {
         self.tabs.iter_mut().find(|t| t.id == id)
     }
 
+    pub fn record_closed_tab(&mut self, url: String) {
+        if !url.is_empty() && url != HOME_URL && url != "about:blank" {
+            self.closed_tabs.push(url);
+            if self.closed_tabs.len() > 30 {
+                self.closed_tabs.remove(0);
+            }
+        }
+    }
+
+    pub fn pop_closed_tab(&mut self) -> Option<String> {
+        self.closed_tabs.pop()
+    }
+
     #[allow(dead_code)]
     pub fn active_nav_state(&self) -> (bool, bool) {
         if let Some(tab) = self.active_tab() {
@@ -268,12 +281,7 @@ impl TabManager {
         if self.tabs.len() > 1 && close_idx < self.tabs.len() {
             let was_active = close_idx == self.active_index;
             let removed_tab = self.tabs.remove(close_idx);
-            if !removed_tab.url.is_empty() && removed_tab.url != HOME_URL && removed_tab.url != "about:blank" {
-                self.closed_tabs.push(removed_tab.url);
-                if self.closed_tabs.len() > 30 {
-                    self.closed_tabs.remove(0);
-                }
-            }
+            self.record_closed_tab(removed_tab.url);
             if let Some(wv) = &removed_tab.webview {
                 let _ = wv.set_visible(false);
             }
@@ -310,13 +318,11 @@ impl TabManager {
             self.sync_tabs_to_chrome(chrome_wv);
             self.save_session(storage);
         } else if self.tabs.len() == 1 && close_idx == 0 {
+            let old_url = self.tabs.first().map(|t| t.url.clone());
+            if let Some(old_url) = old_url {
+                self.record_closed_tab(old_url);
+            }
             if let Some(tab) = self.tabs.get_mut(0) {
-                if !tab.url.is_empty() && tab.url != HOME_URL && tab.url != "about:blank" {
-                    self.closed_tabs.push(tab.url.clone());
-                    if self.closed_tabs.len() > 30 {
-                        self.closed_tabs.remove(0);
-                    }
-                }
                 tab.url = HOME_URL.to_string();
                 tab.title = "New Tab".to_string();
                 tab.last_active = std::time::Instant::now();
@@ -343,7 +349,7 @@ impl TabManager {
         chrome_wv: &WebView,
         storage: &BrowserStorage,
     ) {
-        if let Some(target_url) = self.closed_tabs.pop() {
+        if let Some(target_url) = self.pop_closed_tab() {
             if self.tabs.len() < MAX_TABS {
                 let new_id = self.next_id;
                 self.next_id += 1;
@@ -508,7 +514,7 @@ impl TabManager {
         }
     }
 
-    pub fn apply_governor_tick(&mut self, is_low_mem: bool, chrome_wv: &WebView) {
+    pub fn apply_governor_tick_internal(&mut self, is_low_mem: bool) -> bool {
         let mut state_changed = false;
         const LOW_MEM_MIN_BG_SECS: u64 = 45;
         const TIER2_HIBERNATION_SECS: u64 = 600;
@@ -527,7 +533,7 @@ impl TabManager {
                 || elapsed >= std::time::Duration::from_secs(TIER2_HIBERNATION_SECS);
 
             if should_hibernate {
-                if tab.state != TabState::Tier2Hibernated && tab.webview.is_some() {
+                if tab.state != TabState::Tier2Hibernated {
                     tab.webview = None;
                     tab.state = TabState::Tier2Hibernated;
                     state_changed = true;
@@ -542,8 +548,11 @@ impl TabManager {
                 }
             }
         }
+        state_changed
+    }
 
-        if state_changed {
+    pub fn apply_governor_tick(&mut self, is_low_mem: bool, chrome_wv: &WebView) {
+        if self.apply_governor_tick_internal(is_low_mem) {
             self.sync_tabs_to_chrome(chrome_wv);
         }
     }
@@ -555,7 +564,8 @@ mod tests {
 
     #[test]
     fn test_tab_loading_state_toggle() {
-        let mut tab = Tab {
+        let mut mgr = TabManager::new();
+        mgr.tabs.push(Tab {
             id: 42,
             title: "Loading Page".to_string(),
             url: "https://example.org".to_string(),
@@ -569,7 +579,9 @@ mod tests {
             is_loading: true,
             is_reader_active: false,
             is_muted: false,
-        };
+        });
+
+        let tab = mgr.find_by_id_mut(42).expect("Tab 42 must be found in TabManager");
         assert!(tab.is_loading);
         tab.is_loading = false;
         assert!(!tab.is_loading);
@@ -585,13 +597,31 @@ mod tests {
 
     #[test]
     fn test_tab_smart_sleep_exemptions_lifecycle() {
-        let mut tab = Tab {
-            id: 1,
-            title: "Exemption Test".to_string(),
-            url: "https://example.com".to_string(),
+        let mut mgr = TabManager::new();
+        // Tab 0: Active tab (should NEVER be throttled or hibernated)
+        mgr.tabs.push(Tab {
+            id: 0,
+            title: "Active Tab".to_string(),
+            url: "https://example.com/active".to_string(),
             scroll_x: 0,
             scroll_y: 0,
-            last_active: std::time::Instant::now(),
+            last_active: std::time::Instant::now() - std::time::Duration::from_secs(1000),
+            state: TabState::Active,
+            webview: None,
+            is_audio_playing: false,
+            has_form_input: false,
+            is_loading: false,
+            is_reader_active: false,
+            is_muted: false,
+        });
+        // Tab 1: Audio playing tab (exempt from hibernation/throttling)
+        mgr.tabs.push(Tab {
+            id: 1,
+            title: "Audio Stream".to_string(),
+            url: "https://example.com/audio".to_string(),
+            scroll_x: 0,
+            scroll_y: 0,
+            last_active: std::time::Instant::now() - std::time::Duration::from_secs(1000),
             state: TabState::Active,
             webview: None,
             is_audio_playing: true,
@@ -599,47 +629,92 @@ mod tests {
             is_loading: false,
             is_reader_active: false,
             is_muted: false,
-        };
-        assert!(tab.is_audio_playing);
-        assert!(!tab.has_form_input);
+        });
+        // Tab 2: Form input active tab (exempt from hibernation/throttling)
+        mgr.tabs.push(Tab {
+            id: 2,
+            title: "Form Input".to_string(),
+            url: "https://example.com/form".to_string(),
+            scroll_x: 0,
+            scroll_y: 0,
+            last_active: std::time::Instant::now() - std::time::Duration::from_secs(1000),
+            state: TabState::Active,
+            webview: None,
+            is_audio_playing: false,
+            has_form_input: true,
+            is_loading: false,
+            is_reader_active: false,
+            is_muted: false,
+        });
+        // Tab 3: Idle background tab (> 600s: must hibernate)
+        mgr.tabs.push(Tab {
+            id: 3,
+            title: "Idle Deep Background".to_string(),
+            url: "https://example.com/idle".to_string(),
+            scroll_x: 0,
+            scroll_y: 0,
+            last_active: std::time::Instant::now() - std::time::Duration::from_secs(1000),
+            state: TabState::Active,
+            webview: None,
+            is_audio_playing: false,
+            has_form_input: false,
+            is_loading: false,
+            is_reader_active: false,
+            is_muted: false,
+        });
+        // Tab 4: Moderate idle tab (150s: Tier 1 Throttled when not low memory)
+        mgr.tabs.push(Tab {
+            id: 4,
+            title: "Moderate Background".to_string(),
+            url: "https://example.com/bg".to_string(),
+            scroll_x: 0,
+            scroll_y: 0,
+            last_active: std::time::Instant::now() - std::time::Duration::from_secs(150),
+            state: TabState::Active,
+            webview: None,
+            is_audio_playing: false,
+            has_form_input: false,
+            is_loading: false,
+            is_reader_active: false,
+            is_muted: false,
+        });
 
-        tab.has_form_input = true;
-        assert!(tab.has_form_input);
+        mgr.active_index = 0;
+
+        let changed = mgr.apply_governor_tick_internal(false);
+        assert!(changed);
+
+        // Tab 0 is active tab -> must remain Active
+        assert_eq!(mgr.tabs[0].state, TabState::Active);
+
+        // Tab 1 is playing audio -> must remain Active (audio exemption)
+        assert_eq!(mgr.tabs[1].state, TabState::Active);
+
+        // Tab 2 has form input -> must remain Active (dirty form exemption)
+        assert_eq!(mgr.tabs[2].state, TabState::Active);
+
+        // Tab 3 was idle 1000s -> must be Tier2Hibernated
+        assert_eq!(mgr.tabs[3].state, TabState::Tier2Hibernated);
+
+        // Tab 4 was idle 150s -> must be Tier1Throttled
+        assert_eq!(mgr.tabs[4].state, TabState::Tier1Throttled);
     }
 
     #[test]
     fn test_closed_tabs_stack_behavior() {
-        let mut closed_tabs: Vec<String> = Vec::new();
+        let mut mgr = TabManager::new();
         for i in 1..=35 {
             let url = format!("https://example.com/page{}", i);
-            closed_tabs.push(url);
-            if closed_tabs.len() > 30 {
-                closed_tabs.remove(0);
-            }
+            mgr.record_closed_tab(url);
         }
-        assert_eq!(closed_tabs.len(), 30);
-        assert_eq!(closed_tabs.pop(), Some("https://example.com/page35".to_string()));
-        assert_eq!(closed_tabs.first(), Some(&"https://example.com/page6".to_string()));
-    }
+        // Blanks and home URLs must be ignored
+        mgr.record_closed_tab(HOME_URL.to_string());
+        mgr.record_closed_tab("about:blank".to_string());
+        mgr.record_closed_tab("".to_string());
 
-    #[test]
-    fn test_title_length_clamping() {
-        let normal = "Normal Title - Aerolith";
-        let clamped_normal: String = if normal.chars().count() > 256 {
-            normal.chars().take(256).collect()
-        } else {
-            normal.to_string()
-        };
-        assert_eq!(clamped_normal, normal);
-
-        let giant = "X".repeat(500);
-        let clamped_giant: String = if giant.chars().count() > 256 {
-            giant.chars().take(256).collect()
-        } else {
-            giant
-        };
-        assert_eq!(clamped_giant.len(), 256);
-        assert_eq!(clamped_giant.chars().count(), 256);
+        assert_eq!(mgr.closed_tabs.len(), 30);
+        assert_eq!(mgr.pop_closed_tab(), Some("https://example.com/page35".to_string()));
+        assert_eq!(mgr.closed_tabs.first(), Some(&"https://example.com/page6".to_string()));
     }
 
     #[test]

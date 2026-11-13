@@ -5,6 +5,14 @@ pub fn clean_js_json(json: &str) -> String {
     json.replace('\u{2028}', "\\u2028").replace('\u{2029}', "\\u2029")
 }
 
+pub fn sanitize_title(title: &str) -> String {
+    if title.chars().count() > 256 {
+        title.chars().take(256).collect()
+    } else {
+        title.to_string()
+    }
+}
+
 pub fn normalize_url(input: &str) -> String {
     let mut trimmed = input.trim();
     if trimmed.is_empty() {
@@ -227,5 +235,16 @@ mod tests {
         assert_eq!(get_security_level_for_url("file:///C:/Users/test.html"), "local");
         assert_eq!(get_security_level_for_url("about:blank"), "internal");
         assert_eq!(get_security_level_for_url("chrome://settings"), "internal");
+    }
+
+    #[test]
+    fn test_sanitize_title_clamping() {
+        let normal = "Normal Title - Aerolith";
+        assert_eq!(sanitize_title(normal), normal);
+
+        let giant = "X".repeat(500);
+        let clamped = sanitize_title(&giant);
+        assert_eq!(clamped.chars().count(), 256);
+        assert_eq!(clamped, "X".repeat(256));
     }
 }
