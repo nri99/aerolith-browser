@@ -17,8 +17,8 @@
 | **Modify Chrome Height, Dropdown Expansion, Bounds** | [`src/geometry.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/geometry.rs) | ~3 KB (`physical_chrome_height`, `content_rect`) |
 | **Adblock, Tracking Protection, Shield, Short-Form Filters** | [`src/adblock.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/adblock.rs) | ~45 KB (Trie domain filter & CSS rules) |
 | **Bookmarks, History, redb Database, Settings** | [`src/storage.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/storage.rs) | ~26 KB (ACID transactional redb storage) |
-| **Low-Memory Throttling & Hibernation Thresholds** | [`src/governor.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/governor.rs) | ~4 KB (Kernel memory notification FFI) |
-| **Directories, File Paths, OSK Keyboard Launch** | [`src/paths.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/paths.rs) | ~2 KB (LocalAppData paths & failover) |
+| **Low-Memory Throttling & Hibernation Thresholds** | [`src/governor.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/governor.rs) | ~6 KB (Cross-platform memory governor: Win32 FFI, Linux /proc/meminfo, macOS sysctl) |
+| **Directories, File Paths, OSK Keyboard Launch** | [`src/paths.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/paths.rs) | ~5 KB (Cross-platform AppData: Win %LOCALAPPDATA%, macOS Library, Linux XDG) |
 | **WebView Creation, Gestures, DevTools, Script Injection** | [`src/webview_factory.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/webview_factory.rs) | ~7 KB (wry WebView builders) |
 | **Main Window Loop & Event Dispatch Router** | [`src/main.rs`](file:///c:/Users/noah/My%20Drive%20(nrimre@gmail.com)/antigravity%20projects/aerolith-browser/src/main.rs) | ~15 KB (High-level event loop only) |
 
