@@ -143,6 +143,7 @@ fn handle_chrome_msg(
 
         "home" => {
             tab_mgr.navigate(HOME_URL, window, proxy, bounds, adblocker, webview_data_dir, chrome_wv, storage);
+            reassert_chrome_bounds(chrome_wv, chrome_expansion_mode, current_scale_factor, current_size);
         }
 
         "toggle_fullscreen" => {

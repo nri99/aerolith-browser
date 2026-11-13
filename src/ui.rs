@@ -800,8 +800,16 @@ pub fn get_chrome_html() -> &'static str {
   }, { passive: false });
 
   // Navigation handlers
-  btnBack.onclick = () => postToRust('back', {});
-  btnForward.onclick = () => postToRust('forward', {});
+  btnBack.onclick = () => {
+    closeDrawer();
+    closeSuggestions();
+    postToRust('back', {});
+  };
+  btnForward.onclick = () => {
+    closeDrawer();
+    closeSuggestions();
+    postToRust('forward', {});
+  };
   btnReload.onclick = () => {
     if (isPageLoading) {
       postToRust('stop', {});
@@ -809,8 +817,16 @@ pub fn get_chrome_html() -> &'static str {
       postToRust('reload', {});
     }
   };
-  btnHome.onclick = () => postToRust('home', {});
-  btnNewTab.onclick = () => postToRust('new_tab', { url: 'https://duckduckgo.com' });
+  btnHome.onclick = () => {
+    closeDrawer();
+    closeSuggestions();
+    postToRust('home', {});
+  };
+  btnNewTab.onclick = () => {
+    closeDrawer();
+    closeSuggestions();
+    postToRust('new_tab', { url: 'https://duckduckgo.com' });
+  };
   btnKeyboard.onclick = () => postToRust('launch_keyboard', {});
   btnBookmark.onclick = () => postToRust('toggle_bookmark', {});
   shieldPill.onclick = () => postToRust('toggle_shield', {});
@@ -998,7 +1014,7 @@ pub fn get_chrome_html() -> &'static str {
   });
 
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.omnibox-container')) {
+    if (!e.target.closest || !e.target.closest('.omnibox-container')) {
       closeSuggestions();
     }
   });
@@ -1093,7 +1109,9 @@ pub fn get_chrome_html() -> &'static str {
       tabEl.appendChild(closeSpan);
 
       tabEl.onclick = (e) => {
-        if (!e.target.closest('.tab-close') && !e.target.closest('.tab-audio-btn')) {
+        closeDrawer();
+        closeSuggestions();
+        if ((!e.target.closest || !e.target.closest('.tab-close')) && (!e.target.closest || !e.target.closest('.tab-audio-btn'))) {
           postToRust('switch_tab', { index: idx });
         }
       };
@@ -1101,6 +1119,8 @@ pub fn get_chrome_html() -> &'static str {
       tabEl.onkeydown = (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          closeDrawer();
+          closeSuggestions();
           postToRust('switch_tab', { index: idx });
         }
       };
@@ -1115,6 +1135,7 @@ pub fn get_chrome_html() -> &'static str {
       closeSpan.onpointerdown = (e) => e.stopPropagation();
       closeSpan.ontouchstart = (e) => e.stopPropagation();
       closeSpan.onmousedown = (e) => e.stopPropagation();
+      closeSpan.onauxclick = (e) => e.stopPropagation();
       closeSpan.onclick = (e) => {
         e.stopPropagation();
         postToRust('close_tab', { index: idx });
@@ -1324,7 +1345,7 @@ pub fn get_chrome_html() -> &'static str {
 
   // Global Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
-    // Escape: Close find bar, drawer, or stop page load if active
+    // Escape: Close find bar, drawer, suggestions dropdown, or stop page load if active
     if (e.key === 'Escape') {
       if (findBar && findBar.classList.contains('visible')) {
         e.preventDefault();
@@ -1334,6 +1355,11 @@ pub fn get_chrome_html() -> &'static str {
       if (drawerOverlay.classList.contains('visible')) {
         e.preventDefault();
         closeDrawer();
+        return;
+      }
+      if (suggestionsDropdown && suggestionsDropdown.classList.contains('visible')) {
+        e.preventDefault();
+        closeSuggestions();
         return;
       }
       if (isPageLoading) {
@@ -1459,4 +1485,52 @@ pub fn get_chrome_html() -> &'static str {
 </body>
 </html>
 "#
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chrome_html_contains_critical_ui_elements() {
+        let html = get_chrome_html();
+        assert!(html.contains("id=\"tabStrip\""), "Tab strip container must exist");
+        assert!(html.contains("id=\"btnNewTab\""), "New tab button must exist");
+        assert!(html.contains("id=\"omniboxInput\""), "Omnibox input must exist");
+        assert!(html.contains("id=\"suggestionsDropdown\""), "Suggestions dropdown must exist");
+        assert!(html.contains("id=\"drawerOverlay\""), "Drawer overlay must exist");
+        assert!(html.contains("id=\"findBar\""), "Find in page bar must exist");
+        assert!(html.contains("id=\"shieldPill\""), "Adblock shield pill must exist");
+    }
+
+    #[test]
+    fn test_chrome_html_closest_safety_guards() {
+        let html = get_chrome_html();
+        // Regression test: document click must guard against non-element targets where .closest is undefined
+        assert!(
+            html.contains("!e.target.closest || !e.target.closest('.omnibox-container')"),
+            "Document click listener must safely guard e.target.closest"
+        );
+        assert!(
+            html.contains("(!e.target.closest || !e.target.closest('.tab-close'))"),
+            "Tab element click listener must safely guard e.target.closest"
+        );
+    }
+
+    #[test]
+    fn test_chrome_html_escape_dismisses_suggestions() {
+        let html = get_chrome_html();
+        assert!(
+            html.contains("suggestionsDropdown && suggestionsDropdown.classList.contains('visible')"),
+            "Global Escape key handler must dismiss suggestions dropdown"
+        );
+    }
+
+    #[test]
+    fn test_chrome_html_navigation_dismisses_overlays() {
+        let html = get_chrome_html();
+        assert!(html.contains("btnNewTab.onclick = () => {\n    closeDrawer();\n    closeSuggestions();"));
+        assert!(html.contains("btnHome.onclick = () => {\n    closeDrawer();\n    closeSuggestions();"));
+        assert!(html.contains("closeSpan.onauxclick = (e) => e.stopPropagation();"));
+    }
 }
