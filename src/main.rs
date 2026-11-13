@@ -635,10 +635,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Event::UserEvent(UserEvent::UrlChanged { tab_id, url }) => {
-                let effective_url = if adblocker.block_short_form && AdBlocker::is_short_form_url(&url) {
-                    AdBlocker::sanitize_short_form_url(&url).unwrap_or(url)
+                let was_sanitized = adblocker.block_short_form && AdBlocker::is_short_form_url(&url);
+                let effective_url = if was_sanitized {
+                    AdBlocker::sanitize_short_form_url(&url).unwrap_or(url.clone())
                 } else {
-                    url
+                    url.clone()
                 };
 
                 let is_about_home = if let Some(tab) = tab_mgr.tabs.iter().find(|t| t.id == tab_id) {
@@ -647,11 +648,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     false
                 };
 
-                let needs_redirect = if let Some(tab) = tab_mgr.tabs.iter().find(|t| t.id == tab_id) {
-                    !is_about_home && tab.url != effective_url && !effective_url.is_empty()
-                } else {
-                    false
-                };
+                let needs_redirect = !is_about_home && was_sanitized && effective_url != url && !effective_url.is_empty();
 
                 if let Some(tab) = tab_mgr.find_by_id_mut(tab_id) {
                     if !effective_url.is_empty() && !is_about_home {
