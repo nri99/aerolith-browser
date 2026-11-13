@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const LOGICAL_CHROME_HEIGHT: f64 = 84.0;
 pub const DEFAULT_WIDTH: u32 = 1280;
 pub const DEFAULT_HEIGHT: u32 = 853;
-pub const HOME_URL: &str = "https://duckduckgo.com";
+pub const HOME_URL: &str = "about:home";
 pub const MAX_TABS: usize = 20;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,6 +20,7 @@ pub struct TabInfo {
     pub is_sleeping: bool,
     pub is_audio_playing: bool,
     pub is_muted: bool,
+    pub blocked_count: u32,
 }
 
 pub enum UserEvent {
@@ -54,6 +55,9 @@ pub enum UserEvent {
         tab_id: usize,
         active: bool,
     },
+    AdBlocked {
+        tab_id: usize,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
@@ -76,14 +80,17 @@ mod tests {
             is_sleeping: true,
             is_audio_playing: false,
             is_muted: false,
+            blocked_count: 5,
         };
         let json = serde_json::to_string(&info).expect("Failed to serialize TabInfo");
         assert!(json.contains("\"is_sleeping\":true"));
+        assert!(json.contains("\"blocked_count\":5"));
 
         let deserialized: TabInfo = serde_json::from_str(&json).expect("Failed to deserialize TabInfo");
         assert_eq!(deserialized.id, 1);
         assert_eq!(deserialized.title, "Test Tab");
         assert!(deserialized.is_sleeping);
+        assert_eq!(deserialized.blocked_count, 5);
     }
 
     #[test]
@@ -95,6 +102,7 @@ mod tests {
             is_sleeping: false,
             is_audio_playing: true,
             is_muted: false,
+            blocked_count: 0,
         };
         let json = serde_json::to_string(&info).expect("Failed to serialize TabInfo");
         assert!(json.contains("\"is_audio_playing\":true"));
@@ -104,6 +112,7 @@ mod tests {
         assert_eq!(deserialized.id, 1);
         assert!(deserialized.is_audio_playing);
         assert!(!deserialized.is_muted);
+        assert_eq!(deserialized.blocked_count, 0);
     }
 
     #[test]

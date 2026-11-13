@@ -1,7 +1,7 @@
 use crate::adblock::AdBlocker;
 use crate::storage::BrowserStorage;
 use crate::types::{TabInfo, TabState, UserEvent, HOME_URL, MAX_TABS};
-use crate::url_utils::{clean_js_json, normalize_url};
+use crate::url_utils::clean_js_json;
 use crate::webview_factory::create_content_webview;
 use std::path::PathBuf;
 use tao::event_loop::EventLoopProxy;
@@ -22,6 +22,7 @@ pub struct Tab {
     pub is_loading: bool,
     pub is_reader_active: bool,
     pub is_muted: bool,
+    pub blocked_count: u32,
 }
 
 pub fn create_tab(
@@ -48,6 +49,7 @@ pub fn create_tab(
         is_loading: false,
         is_reader_active: false,
         is_muted: false,
+        blocked_count: 0,
     })
 }
 
@@ -149,6 +151,7 @@ impl TabManager {
                 is_sleeping: t.state != TabState::Active,
                 is_audio_playing: t.is_audio_playing,
                 is_muted: t.is_muted,
+                blocked_count: t.blocked_count,
             })
             .collect();
         if let Ok(json) = serde_json::to_string(&info_list) {
@@ -164,8 +167,8 @@ impl TabManager {
             let is_bm = storage.is_bookmarked(&cur.url);
             let (can_back, can_fwd) = Self::tab_nav_state(cur);
             let script = format!(
-                "window.updateAddress({}, {}, {}, {}, {});",
-                url_json, title_json, can_back, can_fwd, is_bm
+                "window.updateAddress({}, {}, {}, {}, {}, {});",
+                url_json, title_json, can_back, can_fwd, is_bm, cur.blocked_count
             );
             let _ = chrome.evaluate_script(&script);
         }
@@ -330,7 +333,11 @@ impl TabManager {
                 tab.is_loading = false;
                 tab.is_reader_active = false;
                 if let Some(wv) = &tab.webview {
-                    let _ = wv.load_url(HOME_URL);
+                    if HOME_URL == "about:home" {
+                        crate::webview_factory::load_speed_dial(wv);
+                    } else {
+                        let _ = wv.load_url(HOME_URL);
+                    }
                 }
                 self.sync_address_to_chrome(chrome_wv, storage);
                 self.sync_tabs_to_chrome(chrome_wv);
@@ -388,6 +395,138 @@ impl TabManager {
         }
     }
 
+    pub fn duplicate_tab(
+        &mut self,
+        index: usize,
+        win: &Window,
+        proxy: &EventLoopProxy<UserEvent>,
+        bounds: Rect,
+        adblock: &AdBlocker,
+        data_dir: &PathBuf,
+        chrome_wv: &WebView,
+        storage: &BrowserStorage,
+    ) {
+        if index < self.tabs.len() && self.tabs.len() < MAX_TABS {
+            let target_url = self.tabs[index].url.clone();
+            self.new_tab(&target_url, win, proxy, bounds, adblock, data_dir, chrome_wv, storage);
+        }
+    }
+
+    pub fn close_other_tabs_pure(&mut self, keep_index: usize) -> usize {
+        if keep_index >= self.tabs.len() || self.tabs.len() <= 1 {
+            return 0;
+        }
+        let mut closed_urls = Vec::new();
+        let mut new_tabs = Vec::with_capacity(1);
+        let old_tabs = std::mem::take(&mut self.tabs);
+        for (i, mut tab) in old_tabs.into_iter().enumerate() {
+            if i == keep_index {
+                new_tabs.push(tab);
+            } else {
+                tab.webview = None;
+                closed_urls.push(tab.url);
+            }
+        }
+        self.tabs = new_tabs;
+        self.active_index = 0;
+        let closed_count = closed_urls.len();
+        for u in closed_urls {
+            self.record_closed_tab(u);
+        }
+        closed_count
+    }
+
+    pub fn close_other_tabs(
+        &mut self,
+        keep_index: usize,
+        bounds: Rect,
+        chrome_wv: &WebView,
+        storage: &BrowserStorage,
+    ) {
+        if self.close_other_tabs_pure(keep_index) > 0 {
+            if let Some(cur) = self.active_tab_mut() {
+                cur.state = TabState::Active;
+                if let Some(wv) = &cur.webview {
+                    let _ = wv.set_bounds(bounds);
+                    let _ = wv.set_visible(true);
+                }
+            }
+            self.sync_address_to_chrome(chrome_wv, storage);
+            self.sync_tabs_to_chrome(chrome_wv);
+            self.save_session(storage);
+        }
+    }
+
+    pub fn close_tabs_to_right_pure(&mut self, index: usize) -> usize {
+        if index + 1 >= self.tabs.len() {
+            return 0;
+        }
+        let mut closed_urls = Vec::new();
+        let mut keep = Vec::new();
+        let old_tabs = std::mem::take(&mut self.tabs);
+        for (i, mut tab) in old_tabs.into_iter().enumerate() {
+            if i <= index {
+                keep.push(tab);
+            } else {
+                tab.webview = None;
+                closed_urls.push(tab.url);
+            }
+        }
+        self.tabs = keep;
+        if self.active_index >= self.tabs.len() {
+            self.active_index = self.tabs.len() - 1;
+        }
+        let closed_count = closed_urls.len();
+        for u in closed_urls {
+            self.record_closed_tab(u);
+        }
+        closed_count
+    }
+
+    pub fn close_tabs_to_right(
+        &mut self,
+        index: usize,
+        bounds: Rect,
+        chrome_wv: &WebView,
+        storage: &BrowserStorage,
+    ) {
+        if self.close_tabs_to_right_pure(index) > 0 {
+            if let Some(cur) = self.active_tab_mut() {
+                cur.state = TabState::Active;
+                if let Some(wv) = &cur.webview {
+                    let _ = wv.set_bounds(bounds);
+                    let _ = wv.set_visible(true);
+                }
+            }
+            self.sync_address_to_chrome(chrome_wv, storage);
+            self.sync_tabs_to_chrome(chrome_wv);
+            self.save_session(storage);
+        }
+    }
+
+    pub fn hibernate_all_background_pure(&mut self) -> usize {
+        let mut count = 0;
+        for (idx, tab) in self.tabs.iter_mut().enumerate() {
+            if idx == self.active_index {
+                continue;
+            }
+            if tab.state != TabState::Tier2Hibernated {
+                tab.webview = None;
+                tab.state = TabState::Tier2Hibernated;
+                count += 1;
+            }
+        }
+        count
+    }
+
+    pub fn hibernate_all_background(&mut self, chrome_wv: &WebView) -> usize {
+        let count = self.hibernate_all_background_pure();
+        if count > 0 {
+            self.sync_tabs_to_chrome(chrome_wv);
+        }
+        count
+    }
+
     pub fn navigate(
         &mut self,
         target_url: &str,
@@ -399,7 +538,8 @@ impl TabManager {
         chrome_wv: &WebView,
         storage: &BrowserStorage,
     ) {
-        let mut final_url = normalize_url(target_url);
+        let search_engine = storage.get_setting_string("search_engine", "duckduckgo");
+        let mut final_url = crate::url_utils::normalize_url_with_engine(target_url, &search_engine);
         if adblock.block_short_form && AdBlocker::is_short_form_url(&final_url) {
             if let Some(sanitized) = AdBlocker::sanitize_short_form_url(&final_url) {
                 final_url = sanitized;
@@ -410,6 +550,7 @@ impl TabManager {
             tab.url = final_url.clone();
             tab.last_active = std::time::Instant::now();
             tab.state = TabState::Active;
+            tab.blocked_count = 0;
 
             if tab.webview.is_none() {
                 if let Ok(wv) = create_content_webview(tab.id, &final_url, win, proxy, bounds, adblock, data_dir) {
@@ -418,7 +559,11 @@ impl TabManager {
                     tab.webview = Some(wv);
                 }
             } else if let Some(wv) = &tab.webview {
-                let _ = wv.load_url(&final_url);
+                if final_url == HOME_URL {
+                    crate::webview_factory::load_speed_dial(wv);
+                } else {
+                    let _ = wv.load_url(&final_url);
+                }
             }
 
             self.sync_address_to_chrome(chrome_wv, storage);
@@ -579,6 +724,7 @@ mod tests {
             is_loading: true,
             is_reader_active: false,
             is_muted: false,
+            blocked_count: 0,
         });
 
         let tab = mgr.find_by_id_mut(42).expect("Tab 42 must be found in TabManager");
@@ -613,6 +759,7 @@ mod tests {
             is_loading: false,
             is_reader_active: false,
             is_muted: false,
+            blocked_count: 0,
         });
         // Tab 1: Audio playing tab (exempt from hibernation/throttling)
         mgr.tabs.push(Tab {
@@ -629,6 +776,7 @@ mod tests {
             is_loading: false,
             is_reader_active: false,
             is_muted: false,
+            blocked_count: 0,
         });
         // Tab 2: Form input active tab (exempt from hibernation/throttling)
         mgr.tabs.push(Tab {
@@ -645,6 +793,7 @@ mod tests {
             is_loading: false,
             is_reader_active: false,
             is_muted: false,
+            blocked_count: 0,
         });
         // Tab 3: Idle background tab (> 600s: must hibernate)
         mgr.tabs.push(Tab {
@@ -661,6 +810,7 @@ mod tests {
             is_loading: false,
             is_reader_active: false,
             is_muted: false,
+            blocked_count: 0,
         });
         // Tab 4: Moderate idle tab (150s: Tier 1 Throttled when not low memory)
         mgr.tabs.push(Tab {
@@ -677,6 +827,7 @@ mod tests {
             is_loading: false,
             is_reader_active: false,
             is_muted: false,
+            blocked_count: 0,
         });
 
         mgr.active_index = 0;
@@ -732,5 +883,102 @@ mod tests {
 
         let normal_yt = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
         assert_eq!(AdBlocker::sanitize_short_form_url(normal_yt), None);
+    }
+
+    #[test]
+    fn test_close_other_tabs_pure() {
+        let mut mgr = TabManager::new();
+        for i in 0..5 {
+            mgr.tabs.push(Tab {
+                id: i,
+                title: format!("Tab {}", i),
+                url: format!("https://example.com/{}", i),
+                scroll_x: 0,
+                scroll_y: 0,
+                last_active: std::time::Instant::now(),
+                state: TabState::Active,
+                webview: None,
+                is_audio_playing: false,
+                has_form_input: false,
+                is_loading: false,
+                is_reader_active: false,
+                is_muted: false,
+                blocked_count: 0,
+            });
+        }
+        assert_eq!(mgr.tabs.len(), 5);
+
+        // Keep index 2 (url: "https://example.com/2")
+        let closed = mgr.close_other_tabs_pure(2);
+        assert_eq!(closed, 4);
+        assert_eq!(mgr.tabs.len(), 1);
+        assert_eq!(mgr.tabs[0].url, "https://example.com/2");
+        assert_eq!(mgr.active_index, 0);
+        assert_eq!(mgr.closed_tabs.len(), 4);
+    }
+
+    #[test]
+    fn test_close_tabs_to_right_pure() {
+        let mut mgr = TabManager::new();
+        for i in 0..5 {
+            mgr.tabs.push(Tab {
+                id: i,
+                title: format!("Tab {}", i),
+                url: format!("https://example.com/{}", i),
+                scroll_x: 0,
+                scroll_y: 0,
+                last_active: std::time::Instant::now(),
+                state: TabState::Active,
+                webview: None,
+                is_audio_playing: false,
+                has_form_input: false,
+                is_loading: false,
+                is_reader_active: false,
+                is_muted: false,
+                blocked_count: 0,
+            });
+        }
+
+        // Close tabs to the right of index 1 (should close index 2, 3, 4)
+        let closed = mgr.close_tabs_to_right_pure(1);
+        assert_eq!(closed, 3);
+        assert_eq!(mgr.tabs.len(), 2);
+        assert_eq!(mgr.tabs[0].url, "https://example.com/0");
+        assert_eq!(mgr.tabs[1].url, "https://example.com/1");
+        assert_eq!(mgr.closed_tabs.len(), 3);
+    }
+
+    #[test]
+    fn test_hibernate_all_background_pure() {
+        let mut mgr = TabManager::new();
+        for i in 0..4 {
+            mgr.tabs.push(Tab {
+                id: i,
+                title: format!("Tab {}", i),
+                url: format!("https://example.com/{}", i),
+                scroll_x: 0,
+                scroll_y: 0,
+                last_active: std::time::Instant::now(),
+                state: TabState::Active,
+                webview: None,
+                is_audio_playing: false,
+                has_form_input: false,
+                is_loading: false,
+                is_reader_active: false,
+                is_muted: false,
+                blocked_count: 0,
+            });
+        }
+        mgr.active_index = 1;
+
+        // Hibernate all background tabs
+        let hibernated = mgr.hibernate_all_background_pure();
+        assert_eq!(hibernated, 3);
+        // Active tab must remain Active
+        assert_eq!(mgr.tabs[1].state, TabState::Active);
+        // All other tabs must be Tier2Hibernated
+        assert_eq!(mgr.tabs[0].state, TabState::Tier2Hibernated);
+        assert_eq!(mgr.tabs[2].state, TabState::Tier2Hibernated);
+        assert_eq!(mgr.tabs[3].state, TabState::Tier2Hibernated);
     }
 }

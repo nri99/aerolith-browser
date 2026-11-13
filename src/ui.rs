@@ -616,6 +616,151 @@ pub fn get_chrome_html() -> &'static str {
     color: var(--text-muted);
     font-size: 13px;
   }
+
+  /* Tab Context Menu */
+  .tab-context-menu {
+    position: fixed;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.75);
+    padding: 4px;
+    min-width: 180px;
+    z-index: 3000;
+    display: none;
+  }
+  .tab-context-menu-item {
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.12s;
+  }
+  .tab-context-menu-item:hover {
+    background: var(--bg-hover);
+  }
+  .tab-context-menu-separator {
+    height: 1px;
+    background: var(--border-color);
+    margin: 4px 0;
+  }
+
+  /* Zoom Badge in Omnibox */
+  .zoom-badge {
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-color);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-hover);
+    cursor: pointer;
+    transition: opacity 0.3s ease, background 0.15s;
+    white-space: nowrap;
+    user-select: none;
+    flex-shrink: 0;
+  }
+  .zoom-badge:hover {
+    background: var(--bg-active);
+  }
+
+  /* Settings Panel inside Drawer */
+  .drawer-settings-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .settings-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .settings-section:last-child {
+    border-bottom: none;
+  }
+  .settings-section-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent-hover);
+    margin-bottom: 4px;
+  }
+  .settings-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .settings-select {
+    width: 100%;
+    height: 36px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    padding: 0 10px;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+  }
+  .settings-select:focus {
+    border-color: var(--accent);
+  }
+  .settings-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    user-select: none;
+  }
+  .settings-checkbox-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .settings-stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 4px 0;
+  }
+  .settings-stat-val {
+    font-weight: 600;
+    color: var(--shield-active);
+  }
+  .btn-hibernate-action {
+    margin-top: 8px;
+    padding: 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    text-align: center;
+  }
+  .btn-hibernate-action:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+  }
 </style>
 </head>
 <body>
@@ -645,6 +790,7 @@ pub fn get_chrome_html() -> &'static str {
         <div class="omnibox-wrapper">
           <span class="omnibox-icon" id="securityIcon" title="Connection Security">🔒</span>
           <input type="text" class="omnibox-input" id="omniboxInput" placeholder="Search DuckDuckGo or enter URL" spellcheck="false" autocomplete="off" />
+          <span id="zoomBadge" class="zoom-badge" style="display:none;" title="Click to reset zoom (100%)">100%</span>
           <button class="btn-bookmark" id="btnBookmark" title="Bookmark Tab (Ctrl+D)">★</button>
         </div>
 
@@ -674,13 +820,58 @@ pub fn get_chrome_html() -> &'static str {
       <div class="drawer-tabs">
         <div class="drawer-tab active" id="tabBookmarks">Bookmarks</div>
         <div class="drawer-tab" id="tabHistory">History</div>
+        <div class="drawer-tab" id="tabSettings">Settings</div>
         <button class="drawer-close-btn" id="btnDrawerClose" title="Close Drawer (Esc)">✕</button>
       </div>
       <div class="drawer-list" id="drawerList"></div>
+      <div class="drawer-settings-panel" id="drawerSettingsPanel" style="display: none;">
+        <div class="settings-section">
+          <label class="settings-label" for="settingsSearchEngine">Default Search Engine</label>
+          <select id="settingsSearchEngine" class="settings-select">
+            <option value="duckduckgo">DuckDuckGo (Privacy)</option>
+            <option value="google">Google Search</option>
+            <option value="brave">Brave Search</option>
+            <option value="bing">Microsoft Bing</option>
+          </select>
+        </div>
+
+        <div class="settings-section">
+          <label class="settings-checkbox-row">
+            <input type="checkbox" id="settingsClearOnExit" />
+            <span>Clear Browsing History & Session on Exit</span>
+          </label>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">Surface Go 2 Memory Governor</div>
+          <div class="settings-stat-row">
+            <span>Available RAM:</span>
+            <span id="settingsRamFree" class="settings-stat-val">-- MB</span>
+          </div>
+          <div class="settings-stat-row">
+            <span>Memory Pressure:</span>
+            <span id="settingsRamLoad" class="settings-stat-val">--%</span>
+          </div>
+          <button id="btnHibernateAll" class="btn-hibernate-action">💤 Hibernate Background Tabs Now</button>
+        </div>
+      </div>
       <div class="drawer-footer" id="drawerFooter" style="display: none;">
         <button class="btn-clear-history" id="btnClearHistory">Clear Browsing History</button>
       </div>
     </div>
+  </div>
+
+  <!-- Tab Right-Click Context Menu -->
+  <div id="tabContextMenu" class="tab-context-menu">
+    <div class="tab-context-menu-item" data-action="duplicate">📑 Duplicate Tab</div>
+    <div class="tab-context-menu-item" data-action="reload">⟳ Reload Tab</div>
+    <div class="tab-context-menu-item" data-action="mute">🔇 Mute / Unmute</div>
+    <div class="tab-context-menu-separator"></div>
+    <div class="tab-context-menu-item" data-action="close">✕ Close Tab</div>
+    <div class="tab-context-menu-item" data-action="close_others">🚫 Close Other Tabs</div>
+    <div class="tab-context-menu-item" data-action="close_right">➡️ Close Tabs to Right</div>
+    <div class="tab-context-menu-separator"></div>
+    <div class="tab-context-menu-item" data-action="reopen">↩️ Reopen Closed Tab</div>
   </div>
 
 <script>
@@ -738,6 +929,122 @@ pub fn get_chrome_html() -> &'static str {
   const btnFindPrev = document.getElementById('btnFindPrev');
   const btnFindNext = document.getElementById('btnFindNext');
   const btnFindClose = document.getElementById('btnFindClose');
+  const tabSettings = document.getElementById('tabSettings');
+  const drawerSettingsPanel = document.getElementById('drawerSettingsPanel');
+  const settingsSearchEngine = document.getElementById('settingsSearchEngine');
+  const settingsClearOnExit = document.getElementById('settingsClearOnExit');
+  const settingsRamFree = document.getElementById('settingsRamFree');
+  const settingsRamLoad = document.getElementById('settingsRamLoad');
+  const btnHibernateAll = document.getElementById('btnHibernateAll');
+  const tabContextMenu = document.getElementById('tabContextMenu');
+  const zoomBadge = document.getElementById('zoomBadge');
+
+  let currentZoomLevel = 1.0;
+  let zoomFadeTimer = null;
+
+  function triggerZoomDisplay(level) {
+    if (!zoomBadge) return;
+    currentZoomLevel = Math.max(0.3, Math.min(3.0, level));
+    const pct = Math.round(currentZoomLevel * 100);
+    if (pct === 100) {
+      zoomBadge.style.display = 'none';
+      return;
+    }
+    zoomBadge.textContent = pct + '%';
+    zoomBadge.style.display = 'inline-block';
+    zoomBadge.style.opacity = '1';
+    clearTimeout(zoomFadeTimer);
+    zoomFadeTimer = setTimeout(() => {
+      zoomBadge.style.opacity = '0';
+      setTimeout(() => {
+        if (zoomBadge.style.opacity === '0') {
+          zoomBadge.style.display = 'none';
+        }
+      }, 300);
+    }, 2500);
+  }
+
+  if (zoomBadge) {
+    zoomBadge.onclick = (e) => {
+      e.stopPropagation();
+      postToRust('zoom_reset', {});
+      triggerZoomDisplay(1.0);
+    };
+  }
+
+  let contextMenuTabIndex = -1;
+
+  function showTabContextMenu(x, y, tabIdx) {
+    contextMenuTabIndex = tabIdx;
+    tabContextMenu.style.display = 'block';
+    const menuWidth = 190;
+    const menuHeight = 260;
+    const clampedX = Math.min(x, window.innerWidth - menuWidth);
+    const clampedY = Math.min(y, window.innerHeight - menuHeight);
+    tabContextMenu.style.left = clampedX + 'px';
+    tabContextMenu.style.top = clampedY + 'px';
+  }
+
+  function hideTabContextMenu() {
+    if (tabContextMenu) {
+      tabContextMenu.style.display = 'none';
+      contextMenuTabIndex = -1;
+    }
+  }
+
+  if (tabContextMenu) {
+    tabContextMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.tab-context-menu-item');
+      if (!item || contextMenuTabIndex < 0) return;
+      const action = item.dataset.action;
+      const idx = contextMenuTabIndex;
+      hideTabContextMenu();
+      if (action === 'duplicate') {
+        postToRust('duplicate_tab', { index: idx });
+      } else if (action === 'reload') {
+        postToRust('reload_tab', { index: idx });
+      } else if (action === 'mute') {
+        postToRust('toggle_mute', { index: idx });
+      } else if (action === 'close') {
+        postToRust('close_tab', { index: idx });
+      } else if (action === 'close_others') {
+        postToRust('close_other_tabs', { index: idx });
+      } else if (action === 'close_right') {
+        postToRust('close_tabs_to_right', { index: idx });
+      } else if (action === 'reopen') {
+        postToRust('reopen_closed_tab', {});
+      }
+    });
+  }
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest || !e.target.closest('#tabContextMenu')) {
+      hideTabContextMenu();
+    }
+  });
+
+  if (settingsSearchEngine) {
+    settingsSearchEngine.onchange = () => {
+      postToRust('set_search_engine', { engine: settingsSearchEngine.value });
+    };
+  }
+  if (settingsClearOnExit) {
+    settingsClearOnExit.onchange = () => {
+      postToRust('set_clear_on_exit', { enabled: settingsClearOnExit.checked });
+    };
+  }
+  if (btnHibernateAll) {
+    btnHibernateAll.onclick = () => {
+      postToRust('hibernate_all', {});
+    };
+  }
+
+  window.updateSettingsData = function(engine, clearOnExit, freeMb, loadPct) {
+    if (settingsSearchEngine && engine) settingsSearchEngine.value = engine;
+    if (settingsClearOnExit) settingsClearOnExit.checked = !!clearOnExit;
+    if (settingsRamFree) settingsRamFree.textContent = (freeMb !== undefined ? freeMb : '--') + ' MB';
+    if (settingsRamLoad) settingsRamLoad.textContent = (loadPct !== undefined ? loadPct : '--') + '%';
+  };
 
   let isShortFormBlocked = true;
 
@@ -825,7 +1132,7 @@ pub fn get_chrome_html() -> &'static str {
   btnNewTab.onclick = () => {
     closeDrawer();
     closeSuggestions();
-    postToRust('new_tab', { url: 'https://duckduckgo.com' });
+    postToRust('new_tab', { url: 'about:home' });
   };
   btnKeyboard.onclick = () => postToRust('launch_keyboard', {});
   btnBookmark.onclick = () => postToRust('toggle_bookmark', {});
@@ -847,17 +1154,21 @@ pub fn get_chrome_html() -> &'static str {
   function openDrawer(mode) {
     if (mode) {
       drawerMode = mode;
-      if (mode === 'bookmarks') {
-        tabBookmarks.classList.add('active');
-        tabHistory.classList.remove('active');
+      tabBookmarks.classList.toggle('active', mode === 'bookmarks');
+      tabHistory.classList.toggle('active', mode === 'history');
+      if (tabSettings) tabSettings.classList.toggle('active', mode === 'settings');
+
+      if (mode === 'settings') {
+        drawerList.style.display = 'none';
+        if (drawerSettingsPanel) drawerSettingsPanel.style.display = 'flex';
         drawerFooter.style.display = 'none';
       } else {
-        tabHistory.classList.add('active');
-        tabBookmarks.classList.remove('active');
-        drawerFooter.style.display = 'flex';
+        drawerList.style.display = 'block';
+        if (drawerSettingsPanel) drawerSettingsPanel.style.display = 'none';
+        drawerFooter.style.display = (mode === 'history') ? 'flex' : 'none';
+        drawerList.innerHTML = '<div class="drawer-loading">Loading...</div>';
       }
     }
-    drawerList.innerHTML = '<div class="drawer-loading">Loading...</div>';
     drawerOverlay.classList.add('visible');
     setExpandedMode('full');
     loadDrawerContent();
@@ -888,6 +1199,9 @@ pub fn get_chrome_html() -> &'static str {
     drawerMode = 'bookmarks';
     tabBookmarks.classList.add('active');
     tabHistory.classList.remove('active');
+    if (tabSettings) tabSettings.classList.remove('active');
+    drawerList.style.display = 'block';
+    if (drawerSettingsPanel) drawerSettingsPanel.style.display = 'none';
     drawerFooter.style.display = 'none';
     drawerList.innerHTML = '<div class="drawer-loading">Loading...</div>';
     loadDrawerContent();
@@ -897,10 +1211,26 @@ pub fn get_chrome_html() -> &'static str {
     drawerMode = 'history';
     tabHistory.classList.add('active');
     tabBookmarks.classList.remove('active');
+    if (tabSettings) tabSettings.classList.remove('active');
+    drawerList.style.display = 'block';
+    if (drawerSettingsPanel) drawerSettingsPanel.style.display = 'none';
     drawerFooter.style.display = 'flex';
     drawerList.innerHTML = '<div class="drawer-loading">Loading...</div>';
     loadDrawerContent();
   };
+
+  if (tabSettings) {
+    tabSettings.onclick = () => {
+      drawerMode = 'settings';
+      tabSettings.classList.add('active');
+      tabBookmarks.classList.remove('active');
+      tabHistory.classList.remove('active');
+      drawerList.style.display = 'none';
+      if (drawerSettingsPanel) drawerSettingsPanel.style.display = 'flex';
+      drawerFooter.style.display = 'none';
+      loadDrawerContent();
+    };
+  }
 
   btnClearHistory.onclick = () => {
     postToRust('clear_history', {});
@@ -909,8 +1239,10 @@ pub fn get_chrome_html() -> &'static str {
   function loadDrawerContent() {
     if (drawerMode === 'bookmarks') {
       postToRust('get_bookmarks', {});
-    } else {
+    } else if (drawerMode === 'history') {
       postToRust('get_history', {});
+    } else if (drawerMode === 'settings') {
+      postToRust('get_settings', {});
     }
   }
 
@@ -1132,6 +1464,12 @@ pub fn get_chrome_html() -> &'static str {
         }
       };
 
+      tabEl.oncontextmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showTabContextMenu(e.clientX, e.clientY, idx);
+      };
+
       closeSpan.onpointerdown = (e) => e.stopPropagation();
       closeSpan.ontouchstart = (e) => e.stopPropagation();
       closeSpan.onmousedown = (e) => e.stopPropagation();
@@ -1163,7 +1501,7 @@ pub fn get_chrome_html() -> &'static str {
     document.body.scrollTop = 0;
   }
 
-  window.updateAddress = function(url, title, canBack, canFwd, isBookmarked) {
+  window.updateAddress = function(url, title, canBack, canFwd, isBookmarked, blockedCount) {
     if (document.activeElement !== omniboxInput) {
       omniboxInput.value = url || '';
     }
@@ -1174,6 +1512,13 @@ pub fn get_chrome_html() -> &'static str {
       btnBookmark.classList.add('bookmarked');
     } else {
       btnBookmark.classList.remove('bookmarked');
+    }
+    if (isShieldActive) {
+      if (blockedCount && blockedCount > 0) {
+        shieldText.textContent = blockedCount + ' BLOCKED';
+      } else {
+        shieldText.textContent = 'SHIELD ON';
+      }
     }
   };
 
@@ -1369,8 +1714,13 @@ pub fn get_chrome_html() -> &'static str {
       }
     }
 
+    // Ctrl+P: Print & PDF Export
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+      e.preventDefault();
+      postToRust('print', {});
+    }
     // Ctrl+Shift+T: Reopen Closed Tab
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 't') {
+    else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
       postToRust('reopen_closed_tab', {});
     }
@@ -1383,16 +1733,19 @@ pub fn get_chrome_html() -> &'static str {
     else if (e.ctrlKey && (e.key === '=' || e.key === '+')) {
       e.preventDefault();
       postToRust('zoom_in', {});
+      triggerZoomDisplay(currentZoomLevel + 0.1);
     }
     // Ctrl+-: Zoom out
     else if (e.ctrlKey && (e.key === '-' || e.key === '_')) {
       e.preventDefault();
       postToRust('zoom_out', {});
+      triggerZoomDisplay(currentZoomLevel - 0.1);
     }
     // Ctrl+0: Reset zoom
     else if (e.ctrlKey && e.key === '0') {
       e.preventDefault();
       postToRust('zoom_reset', {});
+      triggerZoomDisplay(1.0);
     }
     // Ctrl+Tab: Next tab
     else if (e.ctrlKey && !e.shiftKey && e.key === 'Tab') {
@@ -1428,7 +1781,7 @@ pub fn get_chrome_html() -> &'static str {
     // Ctrl+T: New Tab
     else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
-      postToRust('new_tab', { url: 'https://duckduckgo.com' });
+      postToRust('new_tab', { url: 'about:home' });
     }
     // Ctrl+W: Close Active Tab
     else if (e.ctrlKey && e.key.toLowerCase() === 'w') {
@@ -1487,9 +1840,303 @@ pub fn get_chrome_html() -> &'static str {
 "#
 }
 
+pub fn get_speed_dial_html() -> &'static str {
+    r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New Tab</title>
+<style>
+  :root {
+    --bg-primary: #121316;
+    --bg-card: #1a1c23;
+    --bg-hover: #262933;
+    --border-color: #2a2d39;
+    --text-primary: #f0f2f5;
+    --text-muted: #8c93a8;
+    --accent: #5e6ad2;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .home-container {
+    width: 100%;
+    max-width: 680px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+  }
+  .brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand-logo {
+    font-size: 48px;
+    line-height: 1;
+    filter: drop-shadow(0 4px 12px rgba(94, 106, 210, 0.4));
+  }
+  .brand-title {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+  }
+  .brand-subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .search-wrapper {
+    width: 100%;
+    position: relative;
+  }
+  .search-input {
+    width: 100%;
+    height: 50px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 0 20px 0 48px;
+    font-size: 15px;
+    color: var(--text-primary);
+    outline: none;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .search-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(94, 106, 210, 0.25);
+  }
+  .search-icon {
+    position: absolute;
+    left: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 16px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+  .tiles-grid {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 500px) {
+    .tiles-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: transform 0.15s, background 0.15s, border-color 0.15s;
+  }
+  .tile:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .tile-icon {
+    font-size: 24px;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tile-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    text-align: center;
+  }
+  .telemetry-bar {
+    width: 100%;
+    background: rgba(26, 28, 35, 0.7);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .telemetry-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .telemetry-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 8px #10b981;
+  }
+  .btn-hibernate {
+    background: var(--bg-hover);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn-hibernate:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+  <div class="home-container">
+    <div class="brand">
+      <div class="brand-logo">⚡</div>
+      <h1 class="brand-title">Aerolith</h1>
+      <p class="brand-subtitle">Fast, Lightweight & Shielded for Surface Go 2</p>
+    </div>
+
+    <div class="search-wrapper">
+      <span class="search-icon">🔍</span>
+      <input type="text" class="search-input" id="homeSearchInput" placeholder="Search the web or type a URL..." autofocus autocomplete="off" />
+    </div>
+
+    <div class="tiles-grid">
+      <div class="tile" data-url="https://duckduckgo.com">
+        <div class="tile-icon">🦆</div>
+        <div class="tile-label">DuckDuckGo</div>
+      </div>
+      <div class="tile" data-url="https://www.youtube.com">
+        <div class="tile-icon">▶️</div>
+        <div class="tile-label">YouTube</div>
+      </div>
+      <div class="tile" data-url="https://github.com">
+        <div class="tile-icon">🐙</div>
+        <div class="tile-label">GitHub</div>
+      </div>
+      <div class="tile" data-url="https://www.wikipedia.org">
+        <div class="tile-icon">📚</div>
+        <div class="tile-label">Wikipedia</div>
+      </div>
+      <div class="tile" data-url="https://www.reddit.com">
+        <div class="tile-icon">💬</div>
+        <div class="tile-label">Reddit</div>
+      </div>
+      <div class="tile" data-url="https://news.ycombinator.com">
+        <div class="tile-icon">🔶</div>
+        <div class="tile-label">Hacker News</div>
+      </div>
+      <div class="tile" data-url="https://www.rust-lang.org">
+        <div class="tile-icon">🦀</div>
+        <div class="tile-label">Rust Lang</div>
+      </div>
+      <div class="tile" data-url="https://docs.rs">
+        <div class="tile-icon">📖</div>
+        <div class="tile-label">Docs.rs</div>
+      </div>
+    </div>
+
+    <div class="telemetry-bar">
+      <div class="telemetry-status">
+        <div class="telemetry-dot"></div>
+        <span>Surface Go 2 Memory Governor: <strong>Active</strong></span>
+      </div>
+      <button class="btn-hibernate" id="btnHomeHibernate">Hibernate Background Tabs</button>
+    </div>
+  </div>
+
+  <script>
+    function nav(target) {
+      if (window.ipc) {
+        window.ipc.postMessage(JSON.stringify({ action: 'home_navigate', payload: { query: target } }));
+      } else if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(JSON.stringify({ action: 'home_navigate', payload: { query: target } }));
+      } else {
+        window.location.href = target;
+      }
+    }
+
+    const input = document.getElementById('homeSearchInput');
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const val = input.value.trim();
+        if (val) nav(val);
+      }
+    });
+
+    document.querySelectorAll('.tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        const url = tile.dataset.url;
+        if (url) nav(url);
+      });
+    });
+
+    document.getElementById('btnHomeHibernate').addEventListener('click', () => {
+      const msg = JSON.stringify({ action: 'hibernate_all', payload: {} });
+      if (window.ipc) window.ipc.postMessage(msg);
+      else if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(msg);
+    });
+  </script>
+</body>
+</html>
+"#
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_speed_dial_html_contains_critical_elements() {
+        let html = get_speed_dial_html();
+        assert!(html.contains("id=\"homeSearchInput\""), "Speed dial search input must exist");
+        assert!(html.contains("id=\"btnHomeHibernate\""), "Speed dial hibernate button must exist");
+        assert!(html.contains("DuckDuckGo"), "Speed dial must have DuckDuckGo tile");
+        assert!(html.contains("GitHub"), "Speed dial must have GitHub tile");
+    }
+
+    #[test]
+    fn test_chrome_html_contains_tab_context_menu_and_settings() {
+        let html = get_chrome_html();
+        assert!(html.contains("id=\"tabContextMenu\""), "Tab context menu element must exist");
+        assert!(html.contains("data-action=\"duplicate\""), "Duplicate action in context menu must exist");
+        assert!(html.contains("data-action=\"close_others\""), "Close others action in context menu must exist");
+        assert!(html.contains("id=\"zoomBadge\""), "Zoom badge in omnibox must exist");
+        assert!(html.contains("id=\"tabSettings\""), "Settings drawer tab must exist");
+        assert!(html.contains("id=\"settingsSearchEngine\""), "Search engine selector must exist");
+        assert!(html.contains("id=\"btnHibernateAll\""), "Hibernate all button in drawer must exist");
+    }
 
     #[test]
     fn test_chrome_html_contains_critical_ui_elements() {

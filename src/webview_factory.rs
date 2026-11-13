@@ -96,18 +96,49 @@ pub fn create_content_webview(
     let proxy_load = proxy_ref.clone();
     let proxy_new_win = proxy_ref.clone();
     let proxy_content_ipc = proxy_ref.clone();
+    let proxy_nav = proxy_ref.clone();
 
-    let wv = WebViewBuilder::new_with_web_context(&mut tab_context)
+    let mut builder = WebViewBuilder::new_with_web_context(&mut tab_context)
         .with_bounds(bounds)
-        .with_url(url)
         .with_initialization_script(&init_script)
         .with_back_forward_navigation_gestures(true)
         .with_hotkeys_zoom(true)
-        .with_devtools(cfg!(debug_assertions))
+        .with_devtools(cfg!(debug_assertions));
+
+    if url == "about:home" {
+        builder = builder.with_html(crate::ui::get_speed_dial_html());
+    } else {
+        builder = builder.with_url(url);
+    }
+
+    let wv = builder
         .with_ipc_handler(move |req| {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(req.body()) {
-                if let Some(msg_type) = val["type"].as_str() {
+                let msg_type = val["type"].as_str().or_else(|| val["action"].as_str());
+                if let Some(msg_type) = msg_type {
                     match msg_type {
+                        "ad_blocked" => {
+                            let _ = proxy_content_ipc.send_event(UserEvent::AdBlocked { tab_id });
+                        }
+                        "home_navigate" => {
+                            let target = val["url"]
+                                .as_str()
+                                .or_else(|| val["query"].as_str())
+                                .or_else(|| val["payload"]["url"].as_str())
+                                .or_else(|| val["payload"]["query"].as_str());
+                            if let Some(target) = target {
+                                let _ = proxy_content_ipc.send_event(UserEvent::Chrome(ChromeMsg {
+                                    action: "navigate".into(),
+                                    payload: Some(serde_json::json!({ "url": target })),
+                                }));
+                            }
+                        }
+                        "hibernate_all" => {
+                            let _ = proxy_content_ipc.send_event(UserEvent::Chrome(ChromeMsg {
+                                action: "hibernate_all".into(),
+                                payload: None,
+                            }));
+                        }
                         "spa_navigation" => {
                             let nav_url = val["url"].as_str().unwrap_or("").to_string();
                             if !nav_url.is_empty() {
@@ -159,13 +190,19 @@ pub fn create_content_webview(
                 }
             }
         })
-        .with_navigation_handler(|nav_url| {
+        .with_navigation_handler(move |nav_url| {
             let lower = nav_url.trim().to_lowercase();
             let allowed = lower.starts_with("http://")
                 || lower.starts_with("https://")
                 || lower.starts_with("file://")
-                || lower.starts_with("about:blank");
-            allowed && !AdBlocker::is_tracker_or_ad_domain(&lower)
+                || lower.starts_with("about:blank")
+                || lower.starts_with("about:home");
+            if AdBlocker::is_tracker_or_ad_domain(&lower) {
+                let _ = proxy_nav.send_event(UserEvent::AdBlocked { tab_id });
+                false
+            } else {
+                allowed
+            }
         })
         .with_document_title_changed_handler(move |title| {
             let _ = proxy_title.send_event(UserEvent::TitleChanged {
@@ -207,6 +244,17 @@ pub fn create_content_webview(
         })
         .build_as_child(win)?;
 
+    if url == "about:home" {
+        load_speed_dial(&wv);
+    }
+
     let _ = wv.set_bounds(bounds);
     Ok(wv)
+}
+
+pub fn load_speed_dial(wv: &WebView) {
+    let html = crate::ui::get_speed_dial_html();
+    let json = crate::url_utils::clean_js_json(&serde_json::to_string(html).unwrap_or_else(|_| "\"\"".to_string()));
+    let script = format!("document.open(); document.write({}); document.close();", json);
+    let _ = wv.evaluate_script(&script);
 }

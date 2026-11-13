@@ -56,6 +56,15 @@ fn handle_chrome_msg(
             tab_mgr.sync_tabs_to_chrome(chrome_wv);
             tab_mgr.sync_address_to_chrome(chrome_wv, storage);
             let _ = chrome_wv.evaluate_script(&format!("window.updateShortFormState({});", adblocker.block_short_form));
+            let engine = storage.get_setting_string("search_engine", "duckduckgo");
+            let clear = storage.get_setting_bool("clear_on_exit", false);
+            let free_mb = MemoryGovernor::get_available_mb();
+            let load_pct = MemoryGovernor::get_memory_load_pct();
+            let script = format!(
+                "window.updateSettingsData('{}', {}, {}, {});",
+                engine, clear, free_mb, load_pct
+            );
+            let _ = chrome_wv.evaluate_script(&script);
         }
 
         "navigate" => {
@@ -97,6 +106,45 @@ fn handle_chrome_msg(
         "reopen_closed_tab" => {
             tab_mgr.reopen_closed_tab(window, proxy, bounds, adblocker, webview_data_dir, chrome_wv, storage);
             reassert_chrome_bounds(chrome_wv, chrome_expansion_mode, current_scale_factor, current_size);
+        }
+
+        "duplicate_tab" => {
+            if let Some(payload) = &msg.payload {
+                if let Some(idx) = payload["index"].as_u64() {
+                    tab_mgr.duplicate_tab(idx as usize, window, proxy, bounds, adblocker, webview_data_dir, chrome_wv, storage);
+                    reassert_chrome_bounds(chrome_wv, chrome_expansion_mode, current_scale_factor, current_size);
+                }
+            }
+        }
+
+        "reload_tab" => {
+            if let Some(payload) = &msg.payload {
+                if let Some(idx) = payload["index"].as_u64() {
+                    if let Some(tab) = tab_mgr.get(idx as usize) {
+                        if let Some(wv) = &tab.webview {
+                            let _ = wv.evaluate_script("window.location.reload()");
+                        }
+                    }
+                }
+            }
+        }
+
+        "close_other_tabs" => {
+            if let Some(payload) = &msg.payload {
+                if let Some(idx) = payload["index"].as_u64() {
+                    tab_mgr.close_other_tabs(idx as usize, bounds, chrome_wv, storage);
+                    reassert_chrome_bounds(chrome_wv, chrome_expansion_mode, current_scale_factor, current_size);
+                }
+            }
+        }
+
+        "close_tabs_to_right" => {
+            if let Some(payload) = &msg.payload {
+                if let Some(idx) = payload["index"].as_u64() {
+                    tab_mgr.close_tabs_to_right(idx as usize, bounds, chrome_wv, storage);
+                    reassert_chrome_bounds(chrome_wv, chrome_expansion_mode, current_scale_factor, current_size);
+                }
+            }
         }
 
         "toggle_mute" => {
@@ -166,8 +214,8 @@ fn handle_chrome_msg(
                     let url_json = clean_js_json(&serde_json::to_string(&tab.url).unwrap_or_else(|_| "\"\"".to_string()));
                     let title_json = clean_js_json(&serde_json::to_string(&tab.title).unwrap_or_else(|_| "\"\"".to_string()));
                     let script = format!(
-                        "window.updateAddress({}, {}, {}, {}, {});",
-                        url_json, title_json, can_back, can_fwd, is_bm
+                        "window.updateAddress({}, {}, {}, {}, {}, {});",
+                        url_json, title_json, can_back, can_fwd, is_bm, tab.blocked_count
                     );
                     let _ = chrome_wv.evaluate_script(&script);
                 }
@@ -332,6 +380,55 @@ fn handle_chrome_msg(
             }
         }
 
+        "hibernate_all" => {
+            tab_mgr.hibernate_all_background(chrome_wv);
+            let free_mb = MemoryGovernor::get_available_mb();
+            let load_pct = MemoryGovernor::get_memory_load_pct();
+            let engine = storage.get_setting_string("search_engine", "duckduckgo");
+            let clear = storage.get_setting_bool("clear_on_exit", false);
+            let script = format!(
+                "window.updateSettingsData('{}', {}, {}, {});",
+                engine, clear, free_mb, load_pct
+            );
+            let _ = chrome_wv.evaluate_script(&script);
+        }
+
+        "print" => {
+            if let Some(tab) = tab_mgr.active_tab() {
+                if let Some(wv) = &tab.webview {
+                    let _ = wv.evaluate_script("window.print();");
+                }
+            }
+        }
+
+        "set_search_engine" => {
+            if let Some(payload) = &msg.payload {
+                if let Some(engine) = payload["engine"].as_str() {
+                    let _ = storage.set_setting_string("search_engine", engine);
+                }
+            }
+        }
+
+        "set_clear_on_exit" => {
+            if let Some(payload) = &msg.payload {
+                if let Some(enabled) = payload["enabled"].as_bool() {
+                    let _ = storage.set_setting_bool("clear_on_exit", enabled);
+                }
+            }
+        }
+
+        "get_settings" => {
+            let engine = storage.get_setting_string("search_engine", "duckduckgo");
+            let clear = storage.get_setting_bool("clear_on_exit", false);
+            let free_mb = MemoryGovernor::get_available_mb();
+            let load_pct = MemoryGovernor::get_memory_load_pct();
+            let script = format!(
+                "window.updateSettingsData('{}', {}, {}, {});",
+                engine, clear, free_mb, load_pct
+            );
+            let _ = chrome_wv.evaluate_script(&script);
+        }
+
         _ => ()
     }
 }
@@ -437,7 +534,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                tab_mgr.save_session(&storage);
+                let clear_on_exit = storage.get_setting_bool("clear_on_exit", false);
+                if clear_on_exit {
+                    let _ = storage.clear_history();
+                    let _ = storage.clear_session();
+                } else {
+                    tab_mgr.save_session(&storage);
+                }
                 *control_flow = ControlFlow::Exit;
             }
 
@@ -538,14 +641,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     url
                 };
 
+                let is_about_home = if let Some(tab) = tab_mgr.tabs.iter().find(|t| t.id == tab_id) {
+                    tab.url == HOME_URL && (effective_url == "about:blank" || effective_url == HOME_URL)
+                } else {
+                    false
+                };
+
                 let needs_redirect = if let Some(tab) = tab_mgr.tabs.iter().find(|t| t.id == tab_id) {
-                    tab.url != effective_url && !effective_url.is_empty()
+                    !is_about_home && tab.url != effective_url && !effective_url.is_empty()
                 } else {
                     false
                 };
 
                 if let Some(tab) = tab_mgr.find_by_id_mut(tab_id) {
-                    if !effective_url.is_empty() {
+                    if !effective_url.is_empty() && !is_about_home {
                         tab.url = effective_url.clone();
                     }
                     tab.last_active = std::time::Instant::now();
@@ -574,7 +683,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if active_tab.id == tab_id {
                         tab_mgr.sync_address_to_chrome(&chrome_wv, &storage);
                         let _ = chrome_wv.evaluate_script("window.setReaderState(false);");
-                        let _ = storage.record_visit(&effective_url, &active_tab.title);
+                        if !is_about_home {
+                            let _ = storage.record_visit(&effective_url, &active_tab.title);
+                        }
                         tab_mgr.save_session(&storage);
                     }
                 }
@@ -610,6 +721,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     current_scale_factor,
                     current_size,
                 );
+            }
+
+            Event::UserEvent(UserEvent::AdBlocked { tab_id }) => {
+                if let Some(tab) = tab_mgr.find_by_id_mut(tab_id) {
+                    tab.blocked_count += 1;
+                }
+                if let Some(active_tab) = tab_mgr.active_tab() {
+                    if active_tab.id == tab_id {
+                        tab_mgr.sync_address_to_chrome(&chrome_wv, &storage);
+                    }
+                }
+                tab_mgr.sync_tabs_to_chrome(&chrome_wv);
             }
 
             _ => ()

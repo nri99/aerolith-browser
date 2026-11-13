@@ -310,6 +310,69 @@ impl BrowserStorage {
         Ok(())
     }
 
+    pub fn get_setting_string(&self, key: &str, default_val: &str) -> String {
+        if let Ok(read_txn) = self.db.begin_read() {
+            if let Ok(table) = read_txn.open_table(SETTINGS_TABLE) {
+                if let Ok(Some(val)) = table.get(key) {
+                    return val.value().to_string();
+                }
+            }
+        }
+        default_val.to_string()
+    }
+
+    pub fn set_setting_string(&self, key: &str, val: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(SETTINGS_TABLE)?;
+            table.insert(key, val)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn get_top_sites(&self, limit: usize) -> Vec<BookmarkEntry> {
+        let mut sites = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+
+        // 1. Add bookmarks first
+        for bm in self.get_bookmarks() {
+            if seen_urls.insert(bm.url.clone()) {
+                sites.push(bm);
+            }
+            if sites.len() >= limit {
+                return sites;
+            }
+        }
+
+        // 2. Fill remainder with recent history
+        for h in self.get_recent_history(limit * 2) {
+            if seen_urls.insert(h.url.clone()) {
+                sites.push(BookmarkEntry {
+                    url: h.url,
+                    title: h.title,
+                    created_at: h.last_visited,
+                });
+            }
+            if sites.len() >= limit {
+                break;
+            }
+        }
+
+        sites
+    }
+
+    pub fn clear_session(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(SESSION_TABLE)?;
+            table.remove("current")?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
     pub fn search(&self, query: &str, max_results: usize) -> Vec<HistoryEntry> {
         let query_trimmed = query.trim();
         if query_trimmed.is_empty() || query_trimmed.len() > 256 {
@@ -652,6 +715,24 @@ mod tests {
         // Save false and verify
         storage.set_setting_bool("block_short_form", false).unwrap();
         assert!(!storage.get_setting_bool("block_short_form", true));
+
+        // Test string settings
+        assert_eq!(storage.get_setting_string("search_engine", "duckduckgo"), "duckduckgo");
+        storage.set_setting_string("search_engine", "brave").unwrap();
+        assert_eq!(storage.get_setting_string("search_engine", "duckduckgo"), "brave");
+
+        // Test top sites
+        storage.toggle_bookmark("https://duckduckgo.com", "DuckDuckGo").unwrap();
+        storage.record_visit("https://github.com", "GitHub").unwrap();
+        let top = storage.get_top_sites(4);
+        assert!(!top.is_empty());
+        assert_eq!(top[0].url, "https://duckduckgo.com");
+
+        // Test clear session
+        storage.save_session(&["https://example.com".to_string()], 0).unwrap();
+        assert!(storage.load_session().is_some());
+        storage.clear_session().unwrap();
+        assert!(storage.load_session().is_none());
 
         let _ = std::fs::remove_file(path);
     }

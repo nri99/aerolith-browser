@@ -420,6 +420,7 @@ impl AdBlocker {
                         lower.includes('segment.io') ||
                         lower.includes('mixpanel.com')
                     ) {
+                        __aerolithNotifyHost('ad_blocked', {});
                         // Synthetic 204 response drops connection without initiating TCP/TLS socket
                         return Promise.resolve(new Response(null, { status: 204, statusText: 'Blocked by Aerolith' }));
                     }
@@ -447,6 +448,7 @@ impl AdBlocker {
                         lower.includes('segment.io') ||
                         lower.includes('mixpanel.com')
                     ) {
+                        __aerolithNotifyHost('ad_blocked', {});
                         // Neutralize destination to prevent outbound network call
                         return originalOpen.call(this, method, 'data:text/plain,blocked');
                     }
@@ -469,6 +471,7 @@ impl AdBlocker {
                             lower.includes('hotjar') ||
                             lower.includes('clarity.ms')
                         ) {
+                            __aerolithNotifyHost('ad_blocked', {});
                             return true;
                         }
                     }
@@ -490,6 +493,12 @@ impl AdBlocker {
                 __aerolithNotifyHost('media_playing', { value: true });
             }, true);
             document.addEventListener('pause', () => {
+                const audios = Array.from(document.querySelectorAll('audio, video'));
+                const anyPlaying = audios.some(a => !a.paused && !a.ended);
+                document.documentElement.dataset.aerolithMediaPlaying = anyPlaying ? 'true' : 'false';
+                __aerolithNotifyHost('media_playing', { value: anyPlaying });
+            }, true);
+            document.addEventListener('ended', () => {
                 const audios = Array.from(document.querySelectorAll('audio, video'));
                 const anyPlaying = audios.some(a => !a.paused && !a.ended);
                 document.documentElement.dataset.aerolithMediaPlaying = anyPlaying ? 'true' : 'false';
@@ -1058,7 +1067,9 @@ mod tests {
         assert!(script.contains("aerolithMediaPlaying"));
         assert!(script.contains("aerolithFormDirty"));
         assert!(script.contains("__aerolithNotifyHost"));
+        assert!(script.contains("ad_blocked"));
         assert!(script.contains("media_playing"));
+        assert!(script.contains("ended"));
         assert!(script.contains("scroll"));
     }
 }

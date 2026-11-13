@@ -13,7 +13,17 @@ pub fn sanitize_title(title: &str) -> String {
     }
 }
 
-pub fn normalize_url(input: &str) -> String {
+pub fn build_search_url(query: &str, engine: &str) -> String {
+    let encoded = urlencoding_simple(query);
+    match engine.trim().to_lowercase().as_str() {
+        "google" => format!("https://www.google.com/search?q={}", encoded),
+        "brave" => format!("https://search.brave.com/search?q={}", encoded),
+        "bing" => format!("https://www.bing.com/search?q={}", encoded),
+        _ => format!("https://duckduckgo.com/?q={}", encoded),
+    }
+}
+
+pub fn normalize_url_with_engine(input: &str, engine: &str) -> String {
     let mut trimmed = input.trim();
     if trimmed.is_empty() {
         return HOME_URL.to_string();
@@ -27,7 +37,7 @@ pub fn normalize_url(input: &str) -> String {
     if lower == "about:blank" || lower.starts_with("about:blank#") {
         return "about:blank".to_string();
     }
-    if lower == "about:home" || lower == "about:start" {
+    if lower == "about:home" || lower == "about:start" || lower == "about:aerolith" {
         return HOME_URL.to_string();
     }
 
@@ -41,8 +51,7 @@ pub fn normalize_url(input: &str) -> String {
         || lower.starts_with("search-ms:")
         || lower.starts_with("search:")
     {
-        let encoded = urlencoding_simple(trimmed);
-        return format!("https://duckduckgo.com/?q={}", encoded);
+        return build_search_url(trimmed, engine);
     }
 
     // Case-insensitive scheme check for supported navigation protocols
@@ -53,8 +62,7 @@ pub fn normalize_url(input: &str) -> String {
     // If input contains another protocol scheme (e.g. ftp://, ws://, gopher://, custom://),
     // treat as a search query rather than prepending https:// which creates a malformed URL
     if lower.contains("://") {
-        let encoded = urlencoding_simple(trimmed);
-        return format!("https://duckduckgo.com/?q={}", encoded);
+        return build_search_url(trimmed, engine);
     }
 
     // Localhost / Loopback addresses (default to HTTP)
@@ -84,8 +92,13 @@ pub fn normalize_url(input: &str) -> String {
     }
 
     // Otherwise fallback to search query
-    let encoded = urlencoding_simple(trimmed);
-    format!("https://duckduckgo.com/?q={}", encoded)
+    build_search_url(trimmed, engine)
+}
+
+#[inline]
+#[allow(dead_code)]
+pub fn normalize_url(input: &str) -> String {
+    normalize_url_with_engine(input, "duckduckgo")
 }
 
 pub fn urlencoding_simple(s: &str) -> String {
@@ -246,5 +259,21 @@ mod tests {
         let clamped = sanitize_title(&giant);
         assert_eq!(clamped.chars().count(), 256);
         assert_eq!(clamped, "X".repeat(256));
+    }
+
+    #[test]
+    fn test_build_search_url_engines() {
+        assert_eq!(build_search_url("rust lang", "duckduckgo"), "https://duckduckgo.com/?q=rust+lang");
+        assert_eq!(build_search_url("rust lang", "google"), "https://www.google.com/search?q=rust+lang");
+        assert_eq!(build_search_url("rust lang", "brave"), "https://search.brave.com/search?q=rust+lang");
+        assert_eq!(build_search_url("rust lang", "bing"), "https://www.bing.com/search?q=rust+lang");
+    }
+
+    #[test]
+    fn test_normalize_url_with_engine() {
+        assert_eq!(normalize_url_with_engine("about:home", "google"), HOME_URL);
+        assert_eq!(normalize_url_with_engine("about:start", "google"), HOME_URL);
+        assert_eq!(normalize_url_with_engine("surface go 2", "google"), "https://www.google.com/search?q=surface+go+2");
+        assert_eq!(normalize_url_with_engine("surface go 2", "brave"), "https://search.brave.com/search?q=surface+go+2");
     }
 }
