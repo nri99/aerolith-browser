@@ -848,7 +848,7 @@ pub fn get_chrome_html() -> &'static str {
         </div>
 
         <div class="settings-section">
-          <div class="settings-section-title">Surface Go 2 Memory Governor</div>
+          <div class="settings-section-title">Aerolith Memory Governor</div>
           <div class="settings-stat-row">
             <span>Available RAM:</span>
             <span id="settingsRamFree" class="settings-stat-val">-- MB</span>
@@ -1768,98 +1768,100 @@ pub fn get_chrome_html() -> &'static str {
       }
     }
 
-    // Ctrl+P: Print & PDF Export
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+    const cmdOrCtrl = e.ctrlKey || e.metaKey;
+
+    // Ctrl+P / Cmd+P: Print & PDF Export
+    if (cmdOrCtrl && e.key.toLowerCase() === 'p') {
       e.preventDefault();
       postToRust('print', {});
     }
-    // Ctrl+Shift+T: Reopen Closed Tab
-    else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 't') {
+    // Ctrl+Shift+T / Cmd+Shift+T: Reopen Closed Tab
+    else if (cmdOrCtrl && e.shiftKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
       postToRust('reopen_closed_tab', {});
     }
-    // Ctrl+F: Find in Page
-    else if (e.ctrlKey && e.key.toLowerCase() === 'f') {
+    // Ctrl+F / Cmd+F: Find in Page
+    else if (cmdOrCtrl && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       openFindBar();
     }
-    // Ctrl+= or Ctrl++: Zoom in
-    else if (e.ctrlKey && (e.key === '=' || e.key === '+')) {
+    // Ctrl+= / Cmd+= or Ctrl++: Zoom in
+    else if (cmdOrCtrl && (e.key === '=' || e.key === '+')) {
       e.preventDefault();
       postToRust('zoom_in', {});
       triggerZoomDisplay(currentZoomLevel + 0.1);
     }
-    // Ctrl+-: Zoom out
-    else if (e.ctrlKey && (e.key === '-' || e.key === '_')) {
+    // Ctrl+- / Cmd+-: Zoom out
+    else if (cmdOrCtrl && (e.key === '-' || e.key === '_')) {
       e.preventDefault();
       postToRust('zoom_out', {});
       triggerZoomDisplay(currentZoomLevel - 0.1);
     }
-    // Ctrl+0: Reset zoom
-    else if (e.ctrlKey && e.key === '0') {
+    // Ctrl+0 / Cmd+0: Reset zoom
+    else if (cmdOrCtrl && e.key === '0') {
       e.preventDefault();
       postToRust('zoom_reset', {});
       triggerZoomDisplay(1.0);
     }
-    // Ctrl+Tab: Next tab
-    else if (e.ctrlKey && !e.shiftKey && e.key === 'Tab') {
+    // Ctrl+Tab / Cmd+Tab: Next tab
+    else if (cmdOrCtrl && !e.shiftKey && e.key === 'Tab') {
       e.preventDefault();
       if (tabsState.length > 1) {
         const nextIdx = (activeTabIndex + 1) % tabsState.length;
         postToRust('switch_tab', { index: nextIdx });
       }
     }
-    // Ctrl+Shift+Tab: Previous tab
-    else if (e.ctrlKey && e.shiftKey && e.key === 'Tab') {
+    // Ctrl+Shift+Tab / Cmd+Shift+Tab: Previous tab
+    else if (cmdOrCtrl && e.shiftKey && e.key === 'Tab') {
       e.preventDefault();
       if (tabsState.length > 1) {
         const prevIdx = (activeTabIndex + tabsState.length - 1) % tabsState.length;
         postToRust('switch_tab', { index: prevIdx });
       }
     }
-    // Ctrl+1 through Ctrl+8: Direct tab select
-    else if (e.ctrlKey && e.key >= '1' && e.key <= '8') {
+    // Ctrl+1 through Ctrl+8 / Cmd+1..8: Direct tab select
+    else if (cmdOrCtrl && e.key >= '1' && e.key <= '8') {
       e.preventDefault();
       const targetIdx = parseInt(e.key, 10) - 1;
       if (targetIdx < tabsState.length) {
         postToRust('switch_tab', { index: targetIdx });
       }
     }
-    // Ctrl+9: Select last tab
-    else if (e.ctrlKey && e.key === '9') {
+    // Ctrl+9 / Cmd+9: Select last tab
+    else if (cmdOrCtrl && e.key === '9') {
       e.preventDefault();
       if (tabsState.length > 0) {
         postToRust('switch_tab', { index: tabsState.length - 1 });
       }
     }
-    // Ctrl+T: New Tab
-    else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 't') {
+    // Ctrl+T / Cmd+T: New Tab
+    else if (cmdOrCtrl && !e.shiftKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
       postToRust('new_tab', { url: 'about:home' });
     }
-    // Ctrl+W: Close Active Tab
-    else if (e.ctrlKey && e.key.toLowerCase() === 'w') {
+    // Ctrl+W / Cmd+W: Close Active Tab
+    else if (cmdOrCtrl && e.key.toLowerCase() === 'w') {
       e.preventDefault();
       postToRust('close_tab', { index: activeTabIndex });
     }
-    // Ctrl+R or F5: Reload
-    else if ((e.ctrlKey && e.key.toLowerCase() === 'r') || e.key === 'F5') {
+    // Ctrl+R / Cmd+R or F5: Reload
+    else if ((cmdOrCtrl && e.key.toLowerCase() === 'r') || e.key === 'F5') {
       e.preventDefault();
       postToRust('reload', {});
     }
-    // Ctrl+L or F6: Focus Omnibox
-    else if ((e.ctrlKey && e.key.toLowerCase() === 'l') || e.key === 'F6') {
+    // Ctrl+L / Cmd+L or F6: Focus Omnibox
+    else if ((cmdOrCtrl && e.key.toLowerCase() === 'l') || e.key === 'F6') {
       e.preventDefault();
       omniboxInput.focus();
       omniboxInput.select();
     }
-    // Ctrl+D: Toggle Bookmark
-    else if (e.ctrlKey && e.key.toLowerCase() === 'd') {
+    // Ctrl+D / Cmd+D: Toggle Bookmark
+    else if (cmdOrCtrl && e.key.toLowerCase() === 'd') {
       e.preventDefault();
       postToRust('toggle_bookmark', {});
     }
-    // Ctrl+H: Toggle History Drawer
-    else if (e.ctrlKey && e.key.toLowerCase() === 'h') {
+    // Ctrl+H / Cmd+H: Toggle History Drawer
+    else if (cmdOrCtrl && e.key.toLowerCase() === 'h') {
       e.preventDefault();
       if (drawerOverlay.classList.contains('visible') && drawerMode === 'history') {
         closeDrawer();
@@ -2078,7 +2080,7 @@ pub fn get_speed_dial_html() -> &'static str {
     <div class="brand">
       <div class="brand-logo">⚡</div>
       <h1 class="brand-title">Aerolith</h1>
-      <p class="brand-subtitle">Fast, Lightweight & Shielded for Surface Go 2</p>
+      <p class="brand-subtitle">Fast, Lightweight & Shielded Multi-Platform Browser</p>
     </div>
 
     <div class="search-wrapper">
@@ -2124,7 +2126,7 @@ pub fn get_speed_dial_html() -> &'static str {
     <div class="telemetry-bar">
       <div class="telemetry-status">
         <div class="telemetry-dot"></div>
-        <span>Surface Go 2 Memory Governor: <strong>Active</strong></span>
+        <span>Aerolith Memory Governor: <strong>Active</strong></span>
       </div>
       <button class="btn-hibernate" id="btnHomeHibernate">Hibernate Background Tabs</button>
     </div>

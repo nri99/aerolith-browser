@@ -21,7 +21,7 @@ use types::{ChromeMsg, UserEvent, DEFAULT_HEIGHT, DEFAULT_WIDTH, HOME_URL};
 use url_utils::{clean_js_json, sanitize_title};
 use webview_factory::create_chrome_webview;
 
-#[cfg(target_env = "gnu")]
+#[cfg(all(target_os = "windows", target_env = "gnu"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn RoOriginateErrorW(_error: i32, _cchmax: u32, _message: *const u16) -> i32 {
     0
@@ -456,7 +456,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
 
     let window = WindowBuilder::new()
-        .with_title("Aerolith Browser - Surface Go 2")
+        .with_title("Aerolith Browser")
         .with_inner_size(PhysicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT))
         .build(&event_loop)?;
 
